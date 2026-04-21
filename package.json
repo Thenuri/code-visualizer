@@ -1,0 +1,55 @@
+{
+  "name": "code-city-visualizer",
+  "displayName": "Code City 3D Visualizer",
+  "description": "Visualize your code as a 3D city — classes become buildings, inheritance shapes the skyline",
+  "version": "1.0.0",
+  "publisher": "your-publisher-id",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Visualization", "Other"],
+  "activationEvents": [
+    "onCommand:codeVisualizer.openPanel"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codeVisualizer.openPanel",
+        "title": "Open 3D Code City",
+        "category": "Code City"
+      },
+      {
+        "command": "codeVisualizer.refreshVisualization",
+        "title": "Refresh 3D Code City",
+        "category": "Code City"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "codeVisualizer.openPanel",
+          "when": "resourceExtname =~ /\\.(py|php|cs)$/",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "codeVisualizer.openPanel",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "vite build",
+    "watch": "vite build --watch",
+    "package": "npm run build && vsce package"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "three": "^0.160.0",
+    "vite": "^5.0.0"
+  }
+}
