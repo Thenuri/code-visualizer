@@ -27,6 +27,7 @@ export class CodeParser {
 
     let lineNumber = 0;
     let indentStack = [{ node: ast, indent: -1 }];
+    let pendingAbstract = false;
 
     for (const line of lines) {
       lineNumber++;
@@ -34,6 +35,12 @@ export class CodeParser {
 
       // Skip empty lines and comments
       if (!trimmed || trimmed.startsWith("#")) continue;
+
+      // Track @abstractmethod decorator for the next def
+      if (trimmed.startsWith("@")) {
+        if (trimmed.includes("abstractmethod")) pendingAbstract = true;
+        continue;
+      }
 
       const indent = line.length - line.trimStart().length;
       const indentLevel = Math.floor(indent / 4);
@@ -114,9 +121,8 @@ export class CodeParser {
 
         const isConstructor =
           methodName === "__init__" || methodName === "__new__";
-        const isAbstract =
-          trimmed.includes("@abstractmethod") ||
-          trimmed.includes("abstractmethod");
+        const isAbstract = pendingAbstract;
+        pendingAbstract = false;
 
         // Check for method overriding (polymorphism)
         let overrides = null;
@@ -549,13 +555,14 @@ export class CodeParser {
       );
       if (classMatch) {
         const className = classMatch[1];
-        const inheritance = [];
-        if (classMatch[2]) inheritance.push(classMatch[2]); // extends
-        if (classMatch[3])
-          inheritance.push(...classMatch[3].split(",").map((s) => s.trim())); // implements
+        const extendsClass = classMatch[2] ? [classMatch[2].trim()] : [];
+        const implementsList = classMatch[3]
+          ? classMatch[3].split(",").map((s) => s.trim()).filter(Boolean)
+          : [];
+        const inheritance = [...extendsClass, ...implementsList];
 
         console.log(
-          `📦 PHP: Parsing class ${className}, inherits: ${inheritance.join(", ") || "none"}`,
+          `📦 PHP: Parsing class ${className}, extends: ${extendsClass.join(", ") || "none"}, implements: ${implementsList.join(", ") || "none"}`,
         );
 
         // PHP doesn't have native generics, but check for docblock hints
@@ -572,6 +579,7 @@ export class CodeParser {
           lineEnd: lineNumber,
           complexity: 1,
           inherits: inheritance,
+          implements: implementsList,
           members: [],
           isAbstract: false,
           isNested: isNested,
@@ -688,6 +696,7 @@ export class CodeParser {
           isOverloaded: isOverloaded || false,
           overloadCount: overloadCount || 1,
           parameters: params || [],
+          _openDepth: prevBraceDepth,
         };
         if (currentClass) {
           currentClass.children.push(funcNode);
@@ -840,6 +849,17 @@ export class CodeParser {
         }
       }
 
+      // Exit method body when brace depth returns to the level it opened at
+      if (
+        currentFunction &&
+        braceDepth < prevBraceDepth &&
+        braceDepth <= currentFunction._openDepth
+      ) {
+        currentFunction.lineEnd = lineNumber;
+        currentFunction = null;
+        currentBlock = null;
+      }
+
       if (braceDepth === 0) {
         currentClass = null;
         currentFunction = null;
@@ -848,7 +868,7 @@ export class CodeParser {
     }
 
     this.calculateMetrics(ast);
-    
+
     // Detect object instantiation
     this.detectObjectInstantiation(ast, code, 'php');
     
@@ -912,11 +932,12 @@ export class CodeParser {
           members: [],
           isAbstract: true,
           namespace: currentNamespace || null,
+          _openDepth: prevBraceDepth,
         };
         ast.children.push(currentClass);
         continue;
       }
-      
+
       // Check for interface method signatures (e.g., "void Draw();" or "string GetColor();")
       // These should be added as abstract methods to the interface
       if (currentClass && currentClass.type === 'interface') {
@@ -970,6 +991,7 @@ export class CodeParser {
           isAbstract: true,
           isPartial: isPartial,
           namespace: currentNamespace || null,
+          _openDepth: prevBraceDepth,
         };
         ast.children.push(currentClass);
         continue;
@@ -1014,6 +1036,7 @@ export class CodeParser {
           parentClass: isNested ? currentClass.name : null,
           namespace: currentNamespace || null,
           generics: generics && generics.length > 0 ? generics : null,
+          _openDepth: prevBraceDepth,
         };
 
         if (isNested) {
@@ -1204,19 +1227,20 @@ export class CodeParser {
           name: methodName,
           children: [],
           lineStart: lineNumber,
-          lineEnd: lineNumber, // Will be updated when method ends
+          lineEnd: lineNumber,
           complexity: 1,
           controlStructures: [],
           access: access || "private",
           modifiers: modifiers || [],
           isAbstract: isAbstract,
-          isConstructor: isConstructor || false, // Ensure boolean
+          isConstructor: isConstructor || false,
           isVirtual: isVirtual,
           overrides: overrides,
           isOverloaded: isOverloaded || false,
           overloadCount: overloadCount || 1,
           parameters: params || [],
           generics: generics && generics.length > 0 ? generics : null,
+          _openDepth: prevBraceDepth,
         };
 
         console.log(`📝 C# Method parsed: ${methodName}`, {
@@ -1488,32 +1512,23 @@ export class CodeParser {
         }
       }
 
-      // Update method end line when closing brace
-      if (
-        currentMethod &&
-        braceDepth < prevBraceDepth &&
-        currentMethod.lineStart
-      ) {
+      // Exit method when brace depth returns to where it was when method opened
+      if (currentMethod && braceDepth < prevBraceDepth) {
         currentMethod.lineEnd = lineNumber;
         console.log(
-          `🔚 Method ended: ${currentMethod.name}, depth: ${braceDepth}, prev: ${prevBraceDepth}`,
+          `🔚 Method ended: ${currentMethod.name}, depth: ${braceDepth}, openDepth: ${currentMethod._openDepth}`,
         );
-
-        // Exit method context when its closing brace is hit
-        if (braceDepth === 1 && currentClass) {
-          // We're back at class level
+        if (braceDepth <= currentMethod._openDepth) {
           currentMethod = null;
-          console.log(`  ↩️ Exited method, back to class level`);
+          currentBlock = null;
+          console.log(`  ↩️ Exited method`);
         }
       }
 
-      if (braceDepth === 0) {
-        // Update class end line
-        if (currentClass && currentClass.lineStart) {
-          currentClass.lineEnd = lineNumber;
-        }
+      // Exit class when brace depth returns to where it was when class opened
+      if (!currentMethod && currentClass && braceDepth < prevBraceDepth && braceDepth <= currentClass._openDepth) {
+        currentClass.lineEnd = lineNumber;
         currentClass = null;
-        currentMethod = null;
         currentBlock = null;
       }
     }
@@ -1599,29 +1614,38 @@ export class CodeParser {
         
         // Get the relevant code lines for this node
         if (node.lineStart && node.lineEnd) {
+          const builtInClasses = {
+            'python': ['Exception', 'ValueError', 'TypeError', 'AttributeError', 'KeyError', 'IndexError', 'RuntimeError', 'NotImplementedError', 'StopIteration', 'True', 'False', 'None'],
+            'php': ['Exception', 'InvalidArgumentException', 'RuntimeException', 'stdClass', 'DateTime'],
+            'csharp': ['Exception', 'ArgumentException', 'InvalidOperationException', 'List', 'Dictionary', 'DateTime', 'StringBuilder'],
+            'cpp': ['Exception', 'String', 'Vector', 'Map', 'Set', 'Pair'],
+          };
+          const builtIns = new Set(builtInClasses[language] || []);
+
           for (let i = node.lineStart - 1; i < node.lineEnd && i < lines.length; i++) {
             const line = lines[i];
-            
-            // Pattern for object instantiation (all languages use 'new')
-            // Matches: new ClassName(), $var = new ClassName(), var = new ClassName()
-            const instantiationPattern = /new\s+([A-Z]\w+)\s*\(/g;
-            let match;
-            
-            while ((match = instantiationPattern.exec(line)) !== null) {
-              const className = match[1];
-              
-              // Avoid duplicates and built-in classes for specific languages
-              const builtInClasses = {
-                'python': ['Exception', 'ValueError', 'TypeError', 'AttributeError'],
-                'php': ['Exception', 'InvalidArgumentException', 'RuntimeException', 'stdClass', 'DateTime'],
-                'csharp': ['Exception', 'ArgumentException', 'InvalidOperationException', 'List', 'Dictionary', 'DateTime', 'StringBuilder']
-              };
-              
-              const isBuiltIn = builtInClasses[language]?.includes(className) || false;
-              
-              if (!isBuiltIn && !node.instantiates.includes(className)) {
-                node.instantiates.push(className);
-                console.log(`🏗️ ${language}: Method ${node.name} instantiates ${className} (line ${i + 1})`);
+
+            // Python uses ClassName(...) without 'new' — detect via uppercase-leading identifier
+            if (language === 'python') {
+              const pythonPattern = /(?<![.\w])([A-Z]\w+)\s*\(/g;
+              let match;
+              while ((match = pythonPattern.exec(line)) !== null) {
+                const className = match[1];
+                if (!builtIns.has(className) && !node.instantiates.includes(className)) {
+                  node.instantiates.push(className);
+                  console.log(`🏗️ python: Method ${node.name} instantiates ${className} (line ${i + 1})`);
+                }
+              }
+            } else {
+              // PHP, C#, C++ all use 'new ClassName(...)'
+              const newPattern = /new\s+([A-Z]\w+)\s*\(/g;
+              let match;
+              while ((match = newPattern.exec(line)) !== null) {
+                const className = match[1];
+                if (!builtIns.has(className) && !node.instantiates.includes(className)) {
+                  node.instantiates.push(className);
+                  console.log(`🏗️ ${language}: Method ${node.name} instantiates ${className} (line ${i + 1})`);
+                }
               }
             }
           }

@@ -22258,10 +22258,15 @@
       };
       let lineNumber = 0;
       let indentStack = [{ node: ast, indent: -1 }];
+      let pendingAbstract = false;
       for (const line of lines) {
         lineNumber++;
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith("#")) continue;
+        if (trimmed.startsWith("@")) {
+          if (trimmed.includes("abstractmethod")) pendingAbstract = true;
+          continue;
+        }
         const indent = line.length - line.trimStart().length;
         const indentLevel = Math.floor(indent / 4);
         while (indentStack.length > 1 && indentStack[indentStack.length - 1].indent >= indentLevel) {
@@ -22304,7 +22309,8 @@
           const genericsMatch = trimmed.match(/\[([^\]]+)\]/);
           const generics = genericsMatch ? genericsMatch[1].split(",").map((s) => s.trim()) : [];
           const isConstructor = methodName === "__init__" || methodName === "__new__";
-          const isAbstract2 = trimmed.includes("@abstractmethod") || trimmed.includes("abstractmethod");
+          const isAbstract2 = pendingAbstract;
+          pendingAbstract = false;
           let overrides = null;
           if (parent.type === "class" || parent.type === "abstractClass") {
             const parentClass = parent.inherits && parent.inherits.length > 0 ? this.findClassByName(ast, parent.inherits[0]) : null;
@@ -22611,6 +22617,7 @@
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("/*"))
           continue;
+        const prevBraceDepth = braceDepth;
         braceDepth += (line.match(/{/g) || []).length;
         braceDepth -= (line.match(/}/g) || []).length;
         const interfaceMatch = trimmed.match(
@@ -22665,12 +22672,11 @@
         );
         if (classMatch) {
           const className = classMatch[1];
-          const inheritance = [];
-          if (classMatch[2]) inheritance.push(classMatch[2]);
-          if (classMatch[3])
-            inheritance.push(...classMatch[3].split(",").map((s) => s.trim()));
+          const extendsClass = classMatch[2] ? [classMatch[2].trim()] : [];
+          const implementsList = classMatch[3] ? classMatch[3].split(",").map((s) => s.trim()).filter(Boolean) : [];
+          const inheritance = [...extendsClass, ...implementsList];
           console.log(
-            `📦 PHP: Parsing class ${className}, inherits: ${inheritance.join(", ") || "none"}`
+            `📦 PHP: Parsing class ${className}, extends: ${extendsClass.join(", ") || "none"}, implements: ${implementsList.join(", ") || "none"}`
           );
           const generics = [];
           const isNested = currentClass !== null;
@@ -22682,6 +22688,7 @@
             lineEnd: lineNumber,
             complexity: 1,
             inherits: inheritance,
+            implements: implementsList,
             members: [],
             isAbstract: false,
             isNested,
@@ -22773,7 +22780,8 @@
             access,
             isOverloaded: isOverloaded || false,
             overloadCount: overloadCount || 1,
-            parameters: params || []
+            parameters: params || [],
+            _openDepth: prevBraceDepth
           };
           if (currentClass) {
             currentClass.children.push(funcNode);
@@ -22905,6 +22913,10 @@
             continue;
           }
         }
+        if (currentFunction && braceDepth < prevBraceDepth && braceDepth <= currentFunction._openDepth) {
+          currentFunction.lineEnd = lineNumber;
+          currentFunction = null;
+        }
         if (braceDepth === 0) {
           currentClass = null;
           currentFunction = null;
@@ -22963,7 +22975,8 @@
             inherits: inheritance,
             members: [],
             isAbstract: true,
-            namespace: currentNamespace || null
+            namespace: currentNamespace || null,
+            _openDepth: prevBraceDepth
           };
           ast.children.push(currentClass);
           continue;
@@ -23013,7 +23026,8 @@
             members: [],
             isAbstract: true,
             isPartial,
-            namespace: currentNamespace || null
+            namespace: currentNamespace || null,
+            _openDepth: prevBraceDepth
           };
           ast.children.push(currentClass);
           continue;
@@ -23045,7 +23059,8 @@
             isNested,
             parentClass: isNested ? currentClass.name : null,
             namespace: currentNamespace || null,
-            generics: generics && generics.length > 0 ? generics : null
+            generics: generics && generics.length > 0 ? generics : null,
+            _openDepth: prevBraceDepth
           };
           if (isNested) {
             currentClass.children.push(newClass);
@@ -23172,20 +23187,19 @@
             children: [],
             lineStart: lineNumber,
             lineEnd: lineNumber,
-            // Will be updated when method ends
             complexity: 1,
             controlStructures: [],
             access: access || "private",
             modifiers: modifiers || [],
             isAbstract,
             isConstructor: isConstructor || false,
-            // Ensure boolean
             isVirtual,
             overrides,
             isOverloaded: isOverloaded || false,
             overloadCount: overloadCount || 1,
             parameters: params || [],
-            generics: generics && generics.length > 0 ? generics : null
+            generics: generics && generics.length > 0 ? generics : null,
+            _openDepth: prevBraceDepth
           };
           console.log(`📝 C# Method parsed: ${methodName}`, {
             class: currentClass == null ? void 0 : currentClass.name,
@@ -23393,22 +23407,20 @@
             currentBlock.children.push(statementNode);
           }
         }
-        if (currentMethod && braceDepth < prevBraceDepth && currentMethod.lineStart) {
+        if (currentMethod && braceDepth < prevBraceDepth) {
           currentMethod.lineEnd = lineNumber;
           console.log(
-            `🔚 Method ended: ${currentMethod.name}, depth: ${braceDepth}, prev: ${prevBraceDepth}`
+            `🔚 Method ended: ${currentMethod.name}, depth: ${braceDepth}, openDepth: ${currentMethod._openDepth}`
           );
-          if (braceDepth === 1 && currentClass) {
+          if (braceDepth <= currentMethod._openDepth) {
             currentMethod = null;
-            console.log(`  ↩️ Exited method, back to class level`);
+            currentBlock = null;
+            console.log(`  ↩️ Exited method`);
           }
         }
-        if (braceDepth === 0) {
-          if (currentClass && currentClass.lineStart) {
-            currentClass.lineEnd = lineNumber;
-          }
+        if (!currentMethod && currentClass && braceDepth < prevBraceDepth && braceDepth <= currentClass._openDepth) {
+          currentClass.lineEnd = lineNumber;
           currentClass = null;
-          currentMethod = null;
           currentBlock = null;
         }
       }
@@ -23466,27 +23478,39 @@
     detectObjectInstantiation(ast, sourceCode, language) {
       const lines = sourceCode.split("\n");
       const traverseNode = (node) => {
-        var _a;
         if (node.type === "method" || node.type === "function") {
           if (!node.instantiates) {
             node.instantiates = [];
           }
           if (node.lineStart && node.lineEnd) {
+            const builtInClasses = {
+              "python": ["Exception", "ValueError", "TypeError", "AttributeError", "KeyError", "IndexError", "RuntimeError", "NotImplementedError", "StopIteration", "True", "False", "None"],
+              "php": ["Exception", "InvalidArgumentException", "RuntimeException", "stdClass", "DateTime"],
+              "csharp": ["Exception", "ArgumentException", "InvalidOperationException", "List", "Dictionary", "DateTime", "StringBuilder"],
+              "cpp": ["Exception", "String", "Vector", "Map", "Set", "Pair"]
+            };
+            const builtIns = new Set(builtInClasses[language] || []);
             for (let i = node.lineStart - 1; i < node.lineEnd && i < lines.length; i++) {
               const line = lines[i];
-              const instantiationPattern = /new\s+([A-Z]\w+)\s*\(/g;
-              let match;
-              while ((match = instantiationPattern.exec(line)) !== null) {
-                const className = match[1];
-                const builtInClasses = {
-                  "python": ["Exception", "ValueError", "TypeError", "AttributeError"],
-                  "php": ["Exception", "InvalidArgumentException", "RuntimeException", "stdClass", "DateTime"],
-                  "csharp": ["Exception", "ArgumentException", "InvalidOperationException", "List", "Dictionary", "DateTime", "StringBuilder"]
-                };
-                const isBuiltIn = ((_a = builtInClasses[language]) == null ? void 0 : _a.includes(className)) || false;
-                if (!isBuiltIn && !node.instantiates.includes(className)) {
-                  node.instantiates.push(className);
-                  console.log(`🏗️ ${language}: Method ${node.name} instantiates ${className} (line ${i + 1})`);
+              if (language === "python") {
+                const pythonPattern = new RegExp("(?<![.\\w])([A-Z]\\w+)\\s*\\(", "g");
+                let match;
+                while ((match = pythonPattern.exec(line)) !== null) {
+                  const className = match[1];
+                  if (!builtIns.has(className) && !node.instantiates.includes(className)) {
+                    node.instantiates.push(className);
+                    console.log(`🏗️ python: Method ${node.name} instantiates ${className} (line ${i + 1})`);
+                  }
+                }
+              } else {
+                const newPattern = /new\s+([A-Z]\w+)\s*\(/g;
+                let match;
+                while ((match = newPattern.exec(line)) !== null) {
+                  const className = match[1];
+                  if (!builtIns.has(className) && !node.instantiates.includes(className)) {
+                    node.instantiates.push(className);
+                    console.log(`🏗️ ${language}: Method ${node.name} instantiates ${className} (line ${i + 1})`);
+                  }
                 }
               }
             }
