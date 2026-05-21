@@ -10,15 +10,19 @@ const SUPPORTED = { ".py":"python", ".php":"php", ".cs":"csharp" };
 const SKIP = new Set(["node_modules",".git","vendor","__pycache__","bin","obj",
   "dist","out","build",".vscode","migrations","venv",".venv","env","release","debug"]);
 
+// Auto-generated, boilerplate, and UI framework files — no domain logic
+const SKIP_FILE_RE = /\.(Designer|g|g\.i)\.cs$|^(Program|AssemblyInfo|GlobalUsings|Startup)\.cs$/i;
+
 function readAsync(p){ return new Promise(r=>fs.readFile(p,"utf8",(e,d)=>r(e?null:d))); }
 function skip(p){ return p.split(/[\\\/]/).some(s=>SKIP.has(s.toLowerCase())); }
+function skipFile(name){ return SKIP_FILE_RE.test(name); }
 
 async function scanWorkspace(){
   const uris = await vscode.workspace.findFiles(
     "**/*.{py,php,cs}",
     `{${[...SKIP].map(d=>`**/${d}/**`).join(",")}}`
   );
-  const valid = uris.filter(u=>!skip(u.fsPath));
+  const valid = uris.filter(u=>!skip(u.fsPath) && !skipFile(path.basename(u.fsPath)));
   const files = [];
   const BATCH = 40;
   for(let i=0;i<valid.length;i+=BATCH){

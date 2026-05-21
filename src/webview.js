@@ -74,8 +74,6 @@ function collectClickMeshes() {
     if (ud.inheritancePlinth || ud.inheritanceRidge) { clickMeshes.push(obj); return; }
     if (!ud.node && !ud.isMainFloorMesh && !ud.indicatorType && !ud.isConstructorIndicator && !ud.oopConcept) return;
     if (ud.isOutlineMesh) return;
-    if (ud.inheritanceFamilyRoof) return;
-    if (ud.inheritanceFamilyStripe) return;
     if (ud.compositionIndicator) return;
     if (ud.instantiationIndicator) return;
     const mat = obj.material;
@@ -255,14 +253,12 @@ function buildTooltipHTML(node, ownerName, indicatorType, extra) {
   if (indicatorType) {
     const lesson = getLesson(node, indicatorType);
     const iname = node.name || "?";
-    const icons = {constructor:"🔧",override:"🔀","polymorphism-override":"🔀",virtual:"◈","polymorphism-virtual":"◈",abstract:"◇","polymorphism-abstract":"◇","access-public":"🌐","access-private":"🔒","access-protected":"🛡"};
-    const icon = icons[indicatorType] || "◆";
-    const itype = indicatorType.replace("access-","").replace("polymorphism-","");
     return `
-      <div class="tt-header">${icon} <b>${iname}</b> <span class="type-badge" style="background:${lesson?.color||"#6b7280"}22;color:${lesson?.color||"#6b7280"};border-color:${lesson?.color||"#6b7280"}44">${itype.toUpperCase()}</span></div>
+      ${indicatorStrip(indicatorType, lesson, extra)}
+      <div class="tt-header">⚙ <b>${iname}</b></div>
       ${ownerName?`<div class="tt-owner">↳ in <b>${ownerName}</b></div>`:""}
       ${node.lineStart?`<div class="tt-line">L${node.lineStart}–${node.lineEnd||node.lineStart}</div>`:""}
-      <div class="tt-body">${lesson ? lesson.what.substring(0,110)+"…" : ""}</div>
+      ${lesson ? `<div class="tt-body">${lesson.what.substring(0,110)}…</div>` : ""}
       <div class="tt-hint">Click for full lesson · Ctrl+Click to open file</div>`.trim();
   }
 
@@ -277,14 +273,12 @@ function buildTooltipHTML(node, ownerName, indicatorType, extra) {
   const inh   = (node.inherits||[]).length ? `<div class="tt-inh">extends <b>${node.inherits.join(", ")}</b></div>` : "";
   const mcount = (node.children||[]).filter(d=>d.type==="method"||d.type==="function").length;
   const methods = mcount>0 ? `<div class="tt-methods">⚙ ${mcount} method${mcount!==1?"s":""}</div>` : "";
-  // Access level for methods
-  const access = (node.type==="method"||node.type==="function") && node.access
-    ? `<div class="tt-access">${node.access==="private"?"🔒":node.access==="protected"?"🛡":"🌐"} <b>${node.access}</b></div>` : "";
   const lesson = getLesson(node, null);
   const snippet = lesson ? `<div class="tt-body">${lesson.what.substring(0,100)}…</div>` : "";
   return `
-    <div class="tt-header">${nodeIcon(node.type)} <b>${node.name||"?"}</b> ${typeBadge(node.type)}</div>
-    ${owner}${lines}${inh}${access}${params}${methods}${cx}
+    ${typeStrip(node)}
+    <div class="tt-header"><b>${node.name||"?"}</b></div>
+    ${owner}${lines}${inh}${params}${methods}${cx}
     ${snippet}
     ${badges ? `<div class="tt-concepts">${badges}</div>` : ""}
     <div class="tt-hint">Click for full lesson · Ctrl+Click to open file</div>
@@ -292,7 +286,7 @@ function buildTooltipHTML(node, ownerName, indicatorType, extra) {
 }
 
 // ─── OOP Concept Detection ────────────────────────────────────────────────────
-function detectOOPConcepts(node, ownerName) {
+function detectOOPConcepts(node) {
   const c = [], t = node.type;
   if ((node.inherits||[]).length>0) c.push({icon:"🔗",label:"Inheritance",color:"#a78bfa",desc:`Extends ${node.inherits.join(", ")}`});
   if ((node.implements||[]).length>0) c.push({icon:"📋",label:"Interface",color:"#22d3ee",desc:`Implements ${node.implements.join(", ")}`});
@@ -469,8 +463,6 @@ function buildSpecificExplanation(node, ownerName, indicatorType, lesson) {
 
   // ── CLASS ──────────────────────────────────────────────────────────────────
   if (t === "class") {
-    const childClasses = [];
-    // detect if this class has children by checking if anything inherits it
     thisElement = `<b>${name}</b> is a class${inClass} that defines a reusable blueprint. It has <b>${mc} method${mc!==1?"s":""}</b> (what it can do) and <b>${pc} propert${pc!==1?"ies":"y"}</b> (what it stores).`;
     if (inherits.length) {
       thisElement += ` It extends <b>${inherits.join(", ")}</b>, which means it inherits all of that class's behaviour and can add its own.`;
@@ -740,8 +732,6 @@ function buildDetailHTML(node, ownerName, indicatorType) {
     <div class="section-title">📋 Implements</div>
     <div class="inherit-list">${node.implements.map(i=>`<div class="inherit-row"><b>${i}</b></div>`).join("")}</div>` : "";
 
-  const cityRole = getCityRole(node);
-
   return `
     <div class="panel-header">
       <span class="panel-icon">${nodeIcon(node.type)}</span>
@@ -761,17 +751,6 @@ function buildDetailHTML(node, ownerName, indicatorType) {
   `;
 }
 
-function getCityRole(node) {
-  const t=node.type, mc=(node.children||[]).filter(c=>c.type==="method").length, pc=(node.members||[]).length, cx=node.complexity||1;
-  const roles={
-    class:`🏙 A <b>building</b> with <b>${mc} floor${mc!==1?"s":""}</b> (methods) and <b>${pc} room${pc!==1?"s":""}</b> (properties).${cx>5?" Its towering height signals high complexity — a candidate for refactoring.":""}`,
-    abstractClass:`🏗 An <b>unfinished skyscraper</b> — the blueprint is defined but it cannot stand alone. Subclasses must complete construction.`,
-    interface:`📐 A <b>zoning law</b> — dictates what any building in this district must provide, without specifying how it is built.`,
-    method:`🏢 A single <b>floor</b> in its building.${node.overrides?` The orange stripe shows it <b>overrides</b> the same floor in the parent building (${node.overrides}).`:""}${node.isAbstract?" Marked with scaffolding — a subclass must fill this floor.":""}`,
-    function:`⚙ A standalone <b>workshop</b> — not part of a building, operates independently.`,
-  };
-  return roles[t]||`<b>${t}</b> at line ${node.lineStart||"?"}.`;
-}
 
 // ─── Filter Panel ─────────────────────────────────────────────────────────────
 const FILTERS = {
@@ -808,31 +787,51 @@ function buildLegend() {
   legendEl.innerHTML=`
     <div class="legend-title">🗺 Legend <button class="legend-toggle-btn" id="legend-toggle">Hide</button></div>
     <div class="legend-items" id="legend-items">
-      <div class="legend-section">BUILDINGS</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#3b82f6"></span> Blue = Class</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#8b5cf6"></span> Purple = Abstract Class</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#06b6d4"></span> Cyan = Interface</div>
-      <div class="legend-row" style="font-size:9px;color:#4b5563">Taller = more methods · Wider = more properties</div>
-      <div class="legend-section">FLOOR COLOUR = ACCESS</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#e5c000"></span> Yellow = Public</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#374151;border:1px solid #555"></span> Dark = Private</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#b45309"></span> Amber = Protected</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#4338ca"></span> Indigo = Abstract</div>
-      <div class="legend-section">FLOOR INDICATORS</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#22c55e;border-radius:50%"></span> 🌐 Sphere = Public</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#ef4444"></span> 🔒 Diamond = Private</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#f59e0b"></span> 🛡 Pyramid = Protected</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#d946ef"></span> 🔧 Cube = Constructor</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#00e5c8"></span> ↑ Teal arrow = Override</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#60a5fa;border-radius:50%"></span> · Blue dot = Inherited</div>
-      <div class="legend-section">RELATIONSHIPS</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#1e3a1e;border:1px solid #4ade80"></span> Platform = Inheritance</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#1a6fbf"></span> Annex = Composition</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#ff4400;border-radius:50%"></span> 🏭 Chimney = new X()</div>
-      <div class="legend-section">USE</div>
-      <div class="legend-row">Hover = name · Click = lesson</div>
-      <div class="legend-row">Double-click = enter building</div>
-      <div class="legend-row">Ctrl+Click = open in editor</div>
+
+      <div class="legend-section">① BUILDING BASE — what type is it?</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#3b82f6"></span> Blue base = Regular Class</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#8b5cf6"></span> Purple base = Abstract Class</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#06b6d4"></span> Cyan base = Interface</div>
+      <div class="legend-row legend-note">Taller building = more methods · Wider = more properties</div>
+
+      <div class="legend-section">② ROOF + STRIPES — who does it inherit from?</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:linear-gradient(135deg,#f59e0b,#10b981,#a78bfa)"></span> Roof &amp; stripe colour = inheritance group</div>
+      <div class="legend-row legend-note">Classes with the <b style="color:#94a3b8">same colour roof</b> all inherit</div>
+      <div class="legend-row legend-note">from the same base class (e.g. all extend Animal)</div>
+      <div class="legend-row legend-note">Roof <b style="color:#94a3b8">shape</b> also groups them — same shape,</div>
+      <div class="legend-row legend-note">same parent (flat/pyramid/spire/dome per group)</div>
+      <div class="legend-row legend-note">No roof = does not inherit from anything</div>
+
+      <div class="legend-section">③ FLOORS — one per method</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#e5c000"></span> Yellow floor = Public method</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#374151;border:1px solid #555"></span> Dark floor = Private method</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#b45309"></span> Amber floor = Protected method</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#4338ca"></span> Indigo floor = Abstract method</div>
+
+      <div class="legend-section">④ SHAPES ON FLOORS — access + OOP markers</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#22c55e;border-radius:50%"></span> Green sphere = Public access</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#f59e0b;clip-path:polygon(50% 0%,0% 100%,100% 100%)"></span> Yellow triangle = Protected access</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ef4444;transform:rotate(45deg)"></span> Red diamond = Private access</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ff00ff"></span> Magenta cube = Constructor</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#00e5c8"></span> Teal arrow pole = Override (replaces parent)</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ff8800"></span> Orange strip = Virtual method (can be overridden)</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ffff00"></span> Yellow frame = Abstract method (must be implemented)</div>
+
+      <div class="legend-section">⑤ SMALL CUBES AROUND BASE — properties</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#00ff88"></span> Green cube = Property / Field</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ff6600"></span> Orange cube = Constant</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#9932cc"></span> Purple cube = Static member</div>
+
+      <div class="legend-section">⑥ RELATIONSHIPS</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#1e3a1e;border:1px solid #4ade80"></span> Shared platform = Inheritance family</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#1a6fbf"></span> Side annex = Composition (has-a)</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ff4400;border-radius:50%"></span> Chimney = Instantiation (new X())</div>
+
+      <div class="legend-section">⑦ HOW TO USE</div>
+      <div class="legend-row">Hover any shape → tooltip explains it</div>
+      <div class="legend-row">Click → full OOP lesson</div>
+      <div class="legend-row">Double-click building → enter it</div>
+      <div class="legend-row">Ctrl+Click → open file in editor</div>
     </div>`;
   document.getElementById("legend-toggle").addEventListener("click",e=>{
     const el=document.getElementById("legend-items");
@@ -935,7 +934,18 @@ function getNodeInfo(mesh) {
     };
   }
 
-  // Floor indicator meshes
+  // Roof / stripe — show family membership tooltip
+  if (ud.inheritanceFamilyRoof || ud.inheritanceFamilyStripe || ud.indicatorType === "inheritance-roof" || ud.indicatorType === "inheritance-stripe") {
+    return {
+      node: ud.node || null,
+      ownerName: null,
+      indicatorType: ud.inheritanceFamilyRoof || ud.indicatorType === "inheritance-roof" ? "inheritance-roof" : "inheritance-stripe",
+      familyRoot: ud.familyRoot || null,
+      roofShape: ud.roofShape || null,
+    };
+  }
+
+  // Floor indicator meshes (access sphere, override arrow, virtual octahedron, abstract frame, constructor cube)
   if (ud.indicatorType || ud.isConstructorIndicator || ud.oopConcept) {
     return {
       node: ud.node || null,
@@ -948,7 +958,17 @@ function getNodeInfo(mesh) {
   if (ud.node && (ud.node.type === "method" || ud.node.type === "function"))
     return { node: ud.node, ownerName: ud.ownerClassName || null };
 
-  // Walk up to building
+  // Property / field / constant / static member cube around the base
+  if (ud.node && (ud.node.type === "property" || ud.node.type === "attribute" || ud.node.type === "field" || ud.node.type === "constant" || ud.node.type === "static")) {
+    let ownerName = ud.ownerClassName || null;
+    if (!ownerName) {
+      let cur = mesh.parent;
+      while (cur) { if (cur.userData?.isBuilding && cur.userData.node) { ownerName = cur.userData.node.name; break; } cur = cur.parent; }
+    }
+    return { node: ud.node, ownerName };
+  }
+
+  // Walk up to building (base block or unknown mesh)
   let cur = mesh;
   while (cur) {
     if (cur.userData?.isBuilding && cur.userData.node)
@@ -1024,7 +1044,7 @@ renderer.domElement.addEventListener("click",e=>{
 });
 
 // Double-click a building → enter inside view
-renderer.domElement.addEventListener("dblclick", e => {
+renderer.domElement.addEventListener("dblclick", () => {
   if (insideViewActive) return;
   raycaster.setFromCamera(mouse, camera);
   const hits = raycaster.intersectObjects(clickMeshes, false);
@@ -1119,6 +1139,60 @@ function animate(){
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function nodeIcon(t){return{class:"🏛",abstractClass:"🔷",interface:"📋",method:"⚙",function:"⚙",property:"▪",attribute:"▪",field:"▪",constructor:"🔧",module:"📦"}[t]||"◆";}
 function typeBadge(t){const m={class:["CLASS","#3b82f6"],abstractClass:["ABSTRACT","#8b5cf6"],interface:["INTERFACE","#06b6d4"],method:["METHOD","#10b981"],function:["FUNC","#10b981"],constructor:["CTOR","#f59e0b"],property:["PROP","#6b7280"],attribute:["ATTR","#6b7280"],field:["FIELD","#6b7280"]};const[l,c]=m[t]||["NODE","#6b7280"];return `<span class="type-badge" style="background:${c}22;color:${c};border-color:${c}44">${l}</span>`;}
+
+function typeStrip(node) {
+  const MAP = {
+    class:         {label:"CLASS",         desc:"A blueprint — objects are created from this",           icon:"🏛", color:"#3b82f6"},
+    abstractClass: {label:"ABSTRACT CLASS",desc:"Cannot be created directly — must be extended first",   icon:"🔷", color:"#8b5cf6"},
+    interface:     {label:"INTERFACE",     desc:"A contract — any class that implements it must follow these rules", icon:"📋", color:"#06b6d4"},
+    method:        {label:"METHOD",        desc:"A function that belongs to a class",                    icon:"⚙",  color:"#10b981"},
+    function:      {label:"FUNCTION",      desc:"A standalone block of reusable logic",                  icon:"⚙",  color:"#10b981"},
+    constructor:   {label:"CONSTRUCTOR",   desc:"Runs automatically when a new object is created",       icon:"🔧", color:"#f59e0b"},
+    property:      {label:"PROPERTY",      desc:"Data stored inside this class",                        icon:"▪",  color:"#64748b"},
+    attribute:     {label:"PROPERTY",      desc:"Data stored inside this class",                        icon:"▪",  color:"#64748b"},
+    field:         {label:"FIELD",         desc:"Data stored inside this class",                        icon:"▪",  color:"#64748b"},
+  };
+  const resolvedType = (node.isAbstract && node.type === "class") ? "abstractClass" : node.type;
+  const info = MAP[resolvedType] || {label:(node.type||"NODE").toUpperCase(), desc:"", icon:"◆", color:"#6b7280"};
+  let accessBadge = "";
+  if ((node.type==="method"||node.type==="function"||node.type==="constructor") && node.access) {
+    const ac = {public:"#10b981",protected:"#f59e0b",private:"#ef4444"}[node.access]||"#6b7280";
+    const ai = {public:"🌐",protected:"🛡",private:"🔒"}[node.access]||"◆";
+    accessBadge = `<span class="ts-access" style="background:${ac}22;color:${ac};border:1px solid ${ac}44">${ai} ${node.access.toUpperCase()}</span>`;
+  }
+  return `<div class="type-strip" style="border-left:3px solid ${info.color};background:${info.color}18">
+    <div class="ts-label" style="color:${info.color}">${info.icon} ${info.label}${accessBadge}</div>
+    <div class="ts-desc">${info.desc}</div>
+  </div>`;
+}
+
+function indicatorStrip(indicatorType, lesson, extra) {
+  const MAP = {
+    constructor:            {label:"CONSTRUCTOR MARKER",    desc:"This method initialises a new object when created",                icon:"🔧",color:"#f59e0b"},
+    override:               {label:"OVERRIDE MARKER",       desc:"This method replaces a version inherited from a parent class",     icon:"🔀",color:"#00e5c8"},
+    "polymorphism-override":{label:"OVERRIDE MARKER",       desc:"This method replaces a version inherited from a parent class",     icon:"🔀",color:"#00e5c8"},
+    virtual:                {label:"VIRTUAL METHOD MARKER", desc:"Parent class says: subclasses are allowed to replace this method", icon:"◈", color:"#f59e0b"},
+    "polymorphism-virtual": {label:"VIRTUAL METHOD MARKER", desc:"Parent class says: subclasses are allowed to replace this method", icon:"◈", color:"#f59e0b"},
+    abstract:               {label:"ABSTRACT METHOD MARKER",desc:"No body here — subclasses MUST implement this method themselves",  icon:"◇", color:"#8b5cf6"},
+    "polymorphism-abstract":{label:"ABSTRACT METHOD MARKER",desc:"No body here — subclasses MUST implement this method themselves",  icon:"◇", color:"#8b5cf6"},
+    "access-public":        {label:"PUBLIC ACCESS",         desc:"Anyone can call this — fully open",                               icon:"🌐",color:"#10b981"},
+    "access-protected":     {label:"PROTECTED ACCESS",      desc:"Only this class and its subclasses can call this",                icon:"🛡", color:"#f59e0b"},
+    "access-private":       {label:"PRIVATE ACCESS",        desc:"Only this class itself can use this — hidden from outside",       icon:"🔒",color:"#ef4444"},
+    "inheritance-roof":     {label:"INHERITANCE ROOF",      desc:"",                                                               icon:"🏠",color:"#a78bfa"},
+    "inheritance-stripe":   {label:"INHERITANCE STRIPE",    desc:"",                                                               icon:"▬", color:"#a78bfa"},
+  };
+  let info = MAP[indicatorType] || {label:indicatorType.toUpperCase(), desc:"", icon:"◆", color:lesson?.color||"#6b7280"};
+  // Dynamic description for roof/stripe based on family info
+  if (indicatorType === "inheritance-roof" || indicatorType === "inheritance-stripe") {
+    const family = extra?.familyRoot ? `the <b>${extra.familyRoot}</b>` : "an";
+    const shape  = extra?.roofShape  ? ` (${extra.roofShape} style)` : "";
+    info = { ...info, desc:`This building is part of ${family} inheritance family${shape}. All buildings with this same colour roof and stripes inherit from the same base class.` };
+  }
+  return `<div class="ts-indicator-strip" style="border-left:3px solid ${info.color};background:${info.color}18">
+    <div class="ts-indicator-label" style="color:${info.color}">${info.icon} ${info.label}</div>
+    <div class="ts-indicator-sub" style="color:#94a3b8">${info.desc}</div>
+  </div>`;
+}
 function methodIcon(m){if(m.isConstructor||m.type==="constructor")return"🔧";if((m.modifiers||[]).includes("abstract")||m.isAbstract)return"◇";if((m.modifiers||[]).includes("override")||m.overrides)return"↑";if((m.modifiers||[]).includes("virtual")||m.isVirtual)return"◈";if((m.modifiers||[]).includes("static"))return"⊞";if(m.access==="private"||(m.modifiers||[]).includes("private"))return"🔒";return"⚙";}
 function accessIcon(a){return{private:"🔒",protected:"🛡",public:"🌐"}[a]||"🌐";}
 
@@ -1128,7 +1202,6 @@ function accessIcon(a){return{private:"🔒",protected:"🛡",public:"🌐"}[a]|
 // so you can see ALL rooms at once. Each room is a coloured card on the floor.
 
 let insideViewActive = false;
-let insideBuilding   = null;
 let insideScene      = null;
 let insideRenderer   = null;
 let insideCamera     = null;
@@ -1403,7 +1476,6 @@ function enterBuilding(buildingGroup) {
   if (!node) return;
 
   insideViewActive = true;
-  insideBuilding   = buildingGroup;
   hideTooltip(); closeDetailPanel(); clearSelection(); clearHover();
 
   outsideCamera.pos.copy(camera.position);
@@ -1411,7 +1483,7 @@ function enterBuilding(buildingGroup) {
 
   renderer.domElement.style.display = 'none';
 
-  const { scene: iScene, rooms, totalW, totalD } = buildInsideScene(node);
+  const { scene: iScene, rooms } = buildInsideScene(node);
   insideScene = iScene;
   insideRooms = rooms;
 
@@ -1531,7 +1603,6 @@ function exitBuilding() {
   if (hud) hud.remove();
   renderer.domElement.style.display = 'block';
   insideViewActive = false;
-  insideBuilding   = null;
   insideRooms      = [];
   insideScene      = null;
   document.getElementById('exit-inside').classList.add('hidden');

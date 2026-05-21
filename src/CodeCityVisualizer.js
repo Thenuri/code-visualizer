@@ -40,8 +40,18 @@ export class CodeCityVisualizer {
     const childrenMap = new Map();
     const parentMap = new Map();
 
+    // For partial classes that appear in multiple files, keep the entry that has
+    // the most inheritance data so we never lose the "extends X" relationship.
+    const bestNode = new Map();
     classNodes.forEach((node) => {
       if (!node.name) return;
+      const existing = bestNode.get(node.name);
+      const curParents = this.getParentNames(node).length;
+      const exParents = existing ? this.getParentNames(existing).length : -1;
+      if (!existing || curParents > exParents) bestNode.set(node.name, node);
+    });
+
+    bestNode.forEach((node) => {
       if (!childrenMap.has(node.name)) childrenMap.set(node.name, []);
       const directParent = this.getParentNames(node)[0] || null;
       parentMap.set(node.name, directParent);
@@ -51,7 +61,8 @@ export class CodeCityVisualizer {
       }
     });
 
-    const classNames = classNodes.map((n) => n.name).filter(Boolean);
+    // Use deduplicated names from bestNode — avoids phantom duplicates from partial classes
+    const classNames = [...bestNode.keys()];
     const roots = classNames.filter((name) => {
       const parent = parentMap.get(name);
       return !parent || !this.classNodeMap.has(parent);
@@ -129,7 +140,7 @@ export class CodeCityVisualizer {
 
     for (let depth = 1; depth <= family.maxDepth; depth++) {
       const level = byDepth.get(depth) || [];
-      level.forEach((member, idx) => {
+      level.forEach((member) => {
         const siblings = level.filter((m) => m.parent === member.parent);
         const siblingIdx = siblings.findIndex((m) => m.className === member.className);
         const spread = siblings.length > 1 ? siblingIdx - (siblings.length - 1) / 2 : 0;
@@ -167,6 +178,7 @@ export class CodeCityVisualizer {
       primaryColor: new THREE.Color().setHSL(hue / 360, 0.65, 0.52),
       accentColor: new THREE.Color().setHSL(((hue + 22) % 360) / 360, 0.78, 0.56),
       stripeColor: new THREE.Color().setHSL(((hue + 12) % 360) / 360, 0.62, 0.42),
+      _rootName: familyMeta.root,
     };
 
     this.familyStyles.set(familyMeta.root, style);
@@ -202,7 +214,7 @@ export class CodeCityVisualizer {
       methodNode.inheritedFromClass;
     const isOverride =
       parentMethodNames.has(methodNode.name) ||
-      methodNode.overrides === true ||
+      !!methodNode.overrides ||
       (Array.isArray(methodNode.modifiers) &&
         methodNode.modifiers.includes("override"));
 
@@ -221,7 +233,7 @@ export class CodeCityVisualizer {
     };
   }
 
-  addFamilyRoof(buildingGroup, width, depth, totalHeight, familyStyle, depthLevel) {
+  addFamilyRoof(buildingGroup, width, depth, totalHeight, familyStyle, depthLevel, classNode = null) {
     if (!familyStyle) return;
 
     const roofColor = familyStyle.accentColor
@@ -271,6 +283,10 @@ export class CodeCityVisualizer {
 
     roofMesh.position.y = totalHeight + 1.1;
     roofMesh.userData.inheritanceFamilyRoof = true;
+    roofMesh.userData.indicatorType = "inheritance-roof";
+    roofMesh.userData.node = classNode;
+    roofMesh.userData.familyRoot = familyStyle._rootName || null;
+    roofMesh.userData.roofShape = familyStyle.roofType;
     buildingGroup.add(roofMesh);
   }
 
@@ -285,8 +301,13 @@ export class CodeCityVisualizer {
     this.colorScheme = this.getColorScheme(colorScheme);
 
     const classNodes = this.getClassNodes(ast);
+    // Prefer the node that has inheritance data when the same class name appears twice
     classNodes.forEach((node) => {
-      if (node.name) this.classNodeMap.set(node.name, node);
+      if (!node.name) return;
+      const existing = this.classNodeMap.get(node.name);
+      const curParents = (node.inherits || []).length;
+      const exParents = existing ? (existing.inherits || []).length : -1;
+      if (!existing || curParents > exParents) this.classNodeMap.set(node.name, node);
     });
     const families = this.detectInheritanceFamilies(classNodes);
 
@@ -538,7 +559,7 @@ export class CodeCityVisualizer {
     return Math.max(60, Math.min(180, Math.round(base + growth)));
   }
 
-  createCompositionConnections(ast) {
+  createCompositionConnections(_ast) {
     const buildings = [];
     this.cityGroup.children.forEach(child => {
       if (child.userData?.node && ['class','abstractClass'].includes(child.userData.node.type)) {
@@ -604,7 +625,7 @@ export class CodeCityVisualizer {
     });
   }
 
-  createInstantiationConnections(ast) {
+  createInstantiationConnections(_ast) {
     // INSTANTIATION: glowing FACTORY CHIMNEYS on the roof.
     // Each class a building creates gets its own chimney with a glowing ring + smoke puffs.
     const buildings = [];
@@ -616,8 +637,6 @@ export class CodeCityVisualizer {
       const classNode = building.userData.node;
       const bw = building.userData._width  || 5;
       const bh = building.userData._totalHeight || 10;
-      const bd = building.userData._depth  || 5;
-
       const instantiated = new Map();
       (classNode.children || []).forEach(method => {
         (method.instantiates || []).forEach(cls => {
@@ -627,7 +646,7 @@ export class CodeCityVisualizer {
       if (!instantiated.size) return;
 
       const entries = Array.from(instantiated.entries());
-      entries.forEach(([targetName, count], idx) => {
+      entries.forEach(([targetName], idx) => {
         const total  = entries.length;
         const spread = Math.min(bw * 0.7, total * 1.8);
         const offset = total === 1 ? 0 : (idx/(total-1)-0.5)*spread;
@@ -834,7 +853,7 @@ export class CodeCityVisualizer {
     this.cityGroup.add(districtGroup);
   }
 
-  createDependencyStreets(ast) {
+  createDependencyStreets(_ast) {
     // Create streets/roads showing dependencies between classes
     const buildings = [];
     const nodeToBuilding = new Map();
@@ -868,7 +887,7 @@ export class CodeCityVisualizer {
       if (node.children) {
         node.children.forEach((method) => {
           if (method.children) {
-            method.children.forEach((child) => {
+            method.children.forEach(() => {
               // Check if control structure references another class
               // This is simplified - in a full implementation, would parse method bodies
             });
@@ -1058,23 +1077,17 @@ export class CodeCityVisualizer {
     buildingGroup.userData._depth = depth;
     buildingGroup.userData._totalHeight = totalHeight;
 
-    // Base floor - family style first, then type-specific fallback.
-    let baseColor = familyStyle
-      ? familyStyle.primaryColor
-          .clone()
-          .offsetHSL(0, 0, Math.min(0.12, (familyMeta?.depth || 0) * 0.03))
-          .getHex()
-      : this.colorScheme.class;
-    let baseOpacity = 1.0;
-
+    // Type always determines body color so you can read class/abstract/interface at a glance.
+    // Family membership is shown via roof shape+color, horizontal stripes, and shared platform —
+    // those already use familyStyle independently of the base color below.
+    let baseColor;
     if (classNode.type === "abstractClass") {
-      baseColor = 0x8b5cf6; // Purple for abstract
-      baseOpacity = 1.0;
+      baseColor = 0x8b5cf6; // Always purple = Abstract Class
     } else if (classNode.type === "interface") {
-      baseColor = 0x06b6d4; // Cyan for interface
-      baseOpacity = 1.0;
+      baseColor = 0x06b6d4; // Always cyan = Interface
+    } else {
+      baseColor = 0x3b82f6; // Always blue = Regular Class
     }
-
     const baseGeometry = new THREE.BoxGeometry(width, baseHeight, depth);
     const baseMaterial = new THREE.MeshPhongMaterial({
       color: baseColor,
@@ -1098,6 +1111,7 @@ export class CodeCityVisualizer {
         totalHeight,
         familyStyle,
         familyMeta?.depth || 0,
+        classNode,
       );
 
       const stripeMaterial = new THREE.MeshBasicMaterial({
@@ -1112,6 +1126,9 @@ export class CodeCityVisualizer {
         );
         stripe.position.y = baseHeight + ((i + 1) * totalHeight) / 4;
         stripe.userData.inheritanceFamilyStripe = true;
+        stripe.userData.indicatorType = "inheritance-stripe";
+        stripe.userData.node = classNode;
+        stripe.userData.familyRoot = familyStyle._rootName || null;
         buildingGroup.add(stripe);
       }
     }
@@ -1202,6 +1219,7 @@ export class CodeCityVisualizer {
         classNode.members,
         width,
         depth,
+        classNode,
       );
     }
 
@@ -1274,7 +1292,7 @@ export class CodeCityVisualizer {
     return buildingGroup;
   }
 
-  addCompositionAttachments(buildingGroup, classNode, width, depth, baseHeight) {
+  addCompositionAttachments(buildingGroup, classNode, width, _depth, baseHeight) {
     const compositions = Array.isArray(classNode.compositions)
       ? classNode.compositions
       : [];
@@ -1359,8 +1377,6 @@ export class CodeCityVisualizer {
     // Keep structures well within floor boundaries (use 80% of width/depth)
     const usableWidth = width * 0.8;
     const usableDepth = depth * 0.8;
-    const margin = width * 0.1; // 10% margin on each side
-
     const spacing = usableWidth / (controlStructures.length + 1);
     let xOffset = -usableWidth / 2 + spacing;
 
@@ -1423,7 +1439,7 @@ export class CodeCityVisualizer {
     return colors[type] || 0xffffff;
   }
 
-  addMembersAroundBuilding(buildingGroup, members, width, depth) {
+  addMembersAroundBuilding(buildingGroup, members, width, depth, classNode = null) {
     // Position members on the base, within building footprint or just outside edge
     // Use a smaller radius to keep them closer to the building
     const baseRadius = Math.max(width, depth) / 2 + 0.5; // Closer to building
@@ -1453,6 +1469,7 @@ export class CodeCityVisualizer {
       // Position on top of base (baseHeight / 2 + small offset)
       mesh.position.set(x, 1.0, z); // On base level, not floating
       mesh.userData.node = member;
+      mesh.userData.ownerClassName = classNode?.name || null;
       buildingGroup.add(mesh);
 
       // Always add label for members - make them visible
@@ -1648,6 +1665,8 @@ export class CodeCityVisualizer {
 
       accessIndicator.userData.node = methodNode;
       accessIndicator.userData.oopConcept = "encapsulation";
+      accessIndicator.userData.indicatorType = `access-${methodNode.access || "public"}`;
+      accessIndicator.userData.ownerClassName = ownerClassNode?.name || null;
       floorGroup.add(accessIndicator);
 
       console.log(
@@ -1656,7 +1675,8 @@ export class CodeCityVisualizer {
     }
 
     // Add polymorphism override indicator - simple marker
-    if (methodNode.overrides) {
+    const hasOverride = methodNode.overrides || methodNode.modifiers?.includes('override');
+    if (hasOverride) {
       // POLYMORPHISM OVERRIDE: large teal upward ARROW SIGN sticking up from floor edge.
       // Unmissable from across the city. Arrow points UP = this method overrides parent.
       const teal = new THREE.MeshBasicMaterial({ color: 0x00e5c8 });
@@ -1709,6 +1729,8 @@ export class CodeCityVisualizer {
       virtualIndicator.renderOrder = 1000;
       virtualIndicator.userData.node = methodNode;
       virtualIndicator.userData.oopConcept = "polymorphism-virtual";
+      virtualIndicator.userData.indicatorType = "polymorphism-virtual";
+      virtualIndicator.userData.ownerClassName = ownerClassNode?.name || null;
       floorGroup.add(virtualIndicator);
     }
 
@@ -1731,7 +1753,19 @@ export class CodeCityVisualizer {
       );
       abstractFrame.userData.node = methodNode;
       abstractFrame.userData.oopConcept = "polymorphism-abstract";
+      abstractFrame.userData.indicatorType = "polymorphism-abstract";
+      abstractFrame.userData.ownerClassName = ownerClassNode?.name || null;
       floorGroup.add(abstractFrame);
+      // LineSegments is not a Mesh — add an invisible Mesh at same spot so raycaster can pick it up
+      const abstractHitArea = new THREE.Mesh(
+        new THREE.BoxGeometry(1.4, 1.4, 1.4),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      );
+      abstractHitArea.position.copy(abstractFrame.position);
+      abstractHitArea.userData.node = methodNode;
+      abstractHitArea.userData.indicatorType = "polymorphism-abstract";
+      abstractHitArea.userData.ownerClassName = ownerClassNode?.name || null;
+      floorGroup.add(abstractHitArea);
     }
 
     // Add constructor indicator - magenta cube
@@ -1757,6 +1791,8 @@ export class CodeCityVisualizer {
       constructorIndicator.renderOrder = 999;
       constructorIndicator.userData.node = methodNode;
       constructorIndicator.userData.isConstructorIndicator = true;
+      constructorIndicator.userData.indicatorType = "constructor";
+      constructorIndicator.userData.ownerClassName = ownerClassNode?.name || null;
       floorGroup.add(constructorIndicator);
       console.log(`   ✅ Constructor indicator added`);
     }
@@ -2178,7 +2214,7 @@ export class CodeCityVisualizer {
     return schemes[name] || schemes.default;
   }
 
-  createInheritanceConnections(ast) {
+  createInheritanceConnections(_ast) {
     if (!this.inheritanceFamilies?.length) return;
     this.inheritanceFamilies.forEach(family => {
       if (family.members.length < 2) return;
@@ -2250,249 +2286,8 @@ export class CodeCityVisualizer {
   }
 
 
-  createPolymorphismConnections(ast) {
-    return; // Polymorphism arc lines disabled
-    console.log("createPolymorphismConnections called");
-
-    const classNodes = new Map();
-    const methodFloors = new Map(); // class.method -> { floorGroup, mainMesh, methodNode, className }
-
-    this.cityGroup.children.forEach((building) => {
-      const classNode = building.userData?.node;
-      if (!classNode || !["class", "abstractClass", "interface"].includes(classNode.type)) {
-        return;
-      }
-      classNodes.set(classNode.name, classNode);
-
-      building.children.forEach((child) => {
-        const methodNode = child.userData?.node;
-        if (!methodNode || methodNode.type !== "method") return;
-
-        const key = `${classNode.name}.${methodNode.name}`;
-        const mainMesh = (child.children || []).find(
-          (c) => c.userData && c.userData.isMainFloorMesh,
-        );
-
-        methodFloors.set(key, {
-          floorGroup: child,
-          mainMesh: mainMesh || child,
-          methodNode,
-          className: classNode.name,
-        });
-      });
-    });
-
-    const getParentClass = (className) => {
-      const classNode = classNodes.get(className);
-      if (!classNode) return null;
-      const parents = Array.isArray(classNode.inherits)
-        ? classNode.inherits
-        : Array.isArray(classNode.extends)
-          ? classNode.extends
-          : [];
-      return parents[0] || null;
-    };
-
-    const findBaseMethodKey = (className, methodName) => {
-      let currentClass = className;
-      let currentKey = `${className}.${methodName}`;
-      if (!methodFloors.has(currentKey)) return null;
-
-      while (true) {
-        const parentClass = getParentClass(currentClass);
-        if (!parentClass) break;
-        const parentKey = `${parentClass}.${methodName}`;
-        if (!methodFloors.has(parentKey)) break;
-        currentClass = parentClass;
-        currentKey = parentKey;
-      }
-
-      return currentKey;
-    };
-
-    // Build families by base declaration
-    const families = new Map(); // baseKey -> { methodName, baseKey, members:Set, edges:[] }
-
-    methodFloors.forEach((entry, key) => {
-      const methodName = entry.methodNode.name;
-      const parentClass = getParentClass(entry.className);
-      const parentKey = parentClass ? `${parentClass}.${methodName}` : null;
-      if (!parentKey || !methodFloors.has(parentKey)) return;
-
-      const baseKey = findBaseMethodKey(entry.className, methodName);
-      if (!baseKey) return;
-
-      if (!families.has(baseKey)) {
-        families.set(baseKey, {
-          methodName,
-          baseKey,
-          members: new Set([baseKey]),
-          edges: [],
-        });
-      }
-
-      const family = families.get(baseKey);
-      family.members.add(key);
-      family.members.add(parentKey);
-      family.edges.push({ parentKey, childKey: key });
-    });
-
-    const familyList = Array.from(families.values());
-    const iconTypes = ["sphere", "diamond", "cube", "cone"];
-
-    const createFamilyIcon = (type, color) => {
-      let geometry;
-      if (type === "sphere") geometry = new THREE.SphereGeometry(0.18, 10, 10);
-      else if (type === "diamond") geometry = new THREE.OctahedronGeometry(0.18);
-      else if (type === "cone") geometry = new THREE.ConeGeometry(0.16, 0.34, 8);
-      else geometry = new THREE.BoxGeometry(0.28, 0.28, 0.28);
-
-      return new THREE.Mesh(
-        geometry,
-        new THREE.MeshBasicMaterial({
-          color,
-          emissive: color,
-          emissiveIntensity: 1.6,
-          depthTest: false,
-        }),
-      );
-    };
-
-    familyList.forEach((family, familyIndex) => {
-      const hue = (familyIndex * 137.5 + 24) % 360;
-      const familyColor = new THREE.Color().setHSL(hue / 360, 0.8, 0.56);
-      const familyColorHex = familyColor.getHex();
-      const iconType = iconTypes[familyIndex % iconTypes.length];
-
-      const members = Array.from(family.members);
-      const baseClassName = family.baseKey.split(".")[0];
-      const overrideClassNames = members
-        .filter((k) => k !== family.baseKey)
-        .map((k) => k.split(".")[0]);
-
-      members.forEach((memberKey) => {
-        const data = methodFloors.get(memberKey);
-        if (!data) return;
-
-        const isBase = memberKey === family.baseKey;
-        const floorGroup = data.floorGroup;
-        const mainMesh = data.mainMesh;
-
-        // Apply shared family color accent on floor emissive
-        if (mainMesh && mainMesh.material) {
-          mainMesh.userData.polymorphismOriginalEmissiveIntensity =
-            mainMesh.material.emissiveIntensity || 0.6;
-          mainMesh.material.emissive = familyColor;
-          mainMesh.material.emissiveIntensity = 0.7;
-          mainMesh.userData.polymorphismFamilyMainMesh = true;
-        }
-
-        // Shared family icon
-        const icon = createFamilyIcon(iconType, familyColorHex);
-        icon.position.set(-0.65, (mainMesh.position?.y || 0) + 0.55, 0.55);
-        icon.userData.polymorphismFamily = family.baseKey;
-        icon.userData.polymorphismFamilyIcon = true;
-        icon.userData.node = data.methodNode;
-        icon.userData.ownerClassName = data.className;
-        floorGroup.add(icon);
-
-        // Shared thin family strip at front edge
-        const strip = new THREE.Mesh(
-          new THREE.BoxGeometry(1.0, 0.08, 0.08),
-          new THREE.MeshBasicMaterial({
-            color: familyColorHex,
-            emissive: familyColorHex,
-            emissiveIntensity: 1.2,
-          }),
-        );
-        strip.position.set(0, (mainMesh.position?.y || 0) + 0.1, 0.56);
-        strip.userData.polymorphismFamily = family.baseKey;
-        strip.userData.polymorphismFamilyStrip = true;
-        strip.userData.node = data.methodNode;
-        strip.userData.ownerClassName = data.className;
-        floorGroup.add(strip);
-
-        // Base/override role tags
-        const roleMarker = new THREE.Mesh(
-          isBase
-            ? new THREE.TorusGeometry(0.16, 0.05, 8, 16)
-            : new THREE.ConeGeometry(0.13, 0.26, 6),
-          new THREE.MeshBasicMaterial({
-            color: isBase ? 0x44ccff : 0xffaa33,
-            emissive: isBase ? 0x44ccff : 0xffaa33,
-            emissiveIntensity: 1.6,
-            depthTest: false,
-          }),
-        );
-        roleMarker.position.set(0.65, (mainMesh.position?.y || 0) + 0.55, 0.55);
-        if (isBase) roleMarker.rotation.x = Math.PI / 2;
-        roleMarker.userData.polymorphismFamily = family.baseKey;
-        roleMarker.userData.polymorphismRoleMarker = true;
-        roleMarker.userData.polymorphismRole = isBase ? "base" : "override";
-        roleMarker.userData.node = data.methodNode;
-        roleMarker.userData.ownerClassName = data.className;
-        floorGroup.add(roleMarker);
-
-        // Metadata for interactive highlighting/panel explanation
-        floorGroup.userData.polymorphismFamily = family.baseKey;
-        floorGroup.userData.polymorphismColor = familyColorHex;
-        floorGroup.userData.polymorphismRole = isBase ? "base" : "override";
-        floorGroup.userData.polymorphismBaseClass = baseClassName;
-        floorGroup.userData.polymorphismMethodName = family.methodName;
-        floorGroup.userData.polymorphismOverrideClasses = overrideClassNames;
-
-        data.methodNode.polymorphismFamily = family.baseKey;
-        data.methodNode.polymorphismColor = familyColorHex;
-        data.methodNode.polymorphismRole = isBase ? "base" : "override";
-        data.methodNode.polymorphismBaseClass = baseClassName;
-        data.methodNode.polymorphismMethodName = family.methodName;
-        data.methodNode.polymorphismOverrideClasses = overrideClassNames;
-      });
-
-      // Create subtle family connectors hidden by default
-      family.edges.forEach((edge) => {
-        const parentData = methodFloors.get(edge.parentKey);
-        const childData = methodFloors.get(edge.childKey);
-        if (!parentData || !childData) return;
-
-        const parentPos = new THREE.Vector3();
-        const childPos = new THREE.Vector3();
-        parentData.mainMesh.getWorldPosition(parentPos);
-        childData.mainMesh.getWorldPosition(childPos);
-
-        const startPoint = new THREE.Vector3(parentPos.x, parentPos.y + 1.0, parentPos.z);
-        const endPoint = new THREE.Vector3(childPos.x, childPos.y + 1.0, childPos.z);
-        const controlPoint = new THREE.Vector3(
-          (startPoint.x + endPoint.x) / 2,
-          Math.max(startPoint.y, endPoint.y) + 6,
-          (startPoint.z + endPoint.z) / 2,
-        );
-        const curve = new THREE.QuadraticBezierCurve3(startPoint, controlPoint, endPoint);
-        const geometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(32));
-
-        const arcLine = new THREE.Line(
-          geometry,
-          new THREE.LineBasicMaterial({
-            color: familyColorHex,
-            transparent: true,
-            opacity: 0.65,
-            depthTest: false,
-          }),
-        );
-        arcLine.visible = false;
-        arcLine.userData.disabled = true; // disabled: confusing arcs
-        arcLine.userData.polymorphismConnection = true;
-        arcLine.userData.focusOnly = true;
-        arcLine.userData.polymorphismFamily = family.baseKey;
-        arcLine.userData.parentMethod = edge.parentKey;
-        arcLine.userData.childMethod = edge.childKey;
-        arcLine.userData.parentFloor = parentData.floorGroup;
-        arcLine.userData.childFloor = childData.floorGroup;
-        this.cityGroup.add(arcLine);
-      });
-    });
-
-    console.log(`🎉 Polymorphism families: ${familyList.length}`);
+  createPolymorphismConnections(_ast) {
+    // Polymorphism arc lines disabled
   }
 
   clear() {

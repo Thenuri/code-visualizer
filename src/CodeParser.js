@@ -946,15 +946,15 @@ export class CodeParser {
         }
       }
 
-      // Check for abstract class (including partial abstract classes)
+      // Check for abstract class (including partial, sealed, new abstract classes)
       const abstractMatch = trimmed.match(
-        /^(public|private|protected|internal)?\s*(partial)?\s*abstract\s+class\s+(\w+)(?:\s*:\s*([^{]+))?/,
+        /^(public|private|protected|internal)?\s*((?:(?:partial|sealed|new|unsafe)\s+)+)?abstract\s+class\s+(\w+)(?:\s*:\s*([^{]+))?/,
       );
       if (abstractMatch) {
         const inheritance = abstractMatch[4]
           ? abstractMatch[4].split(",").map((s) => s.trim())
           : [];
-        const isPartial = abstractMatch[2] === "partial";
+        const isPartial = /\bpartial\b/.test(abstractMatch[2] || "");
         console.log(
           `🟣 C# Abstract class detected: ${abstractMatch[3]}${isPartial ? " (partial)" : ""}, inherits: [${inheritance.join(", ")}]`,
         );
@@ -975,15 +975,16 @@ export class CodeParser {
         continue;
       }
 
-      // Check for class (including generics, nested classes, and partial classes)
-      // Only match class keyword that's preceded by access modifiers or at start of line
-      // Don't match "class" in comments
+      // Check for class (including generics, nested classes, partial, sealed, static, new classes)
+      // Group 1: access modifier  Group 2: extra modifiers (partial/sealed/static/new/unsafe)
+      // Group 3: class name  Group 4: generics  Group 5: inheritance list
       const classMatch = trimmed.match(
-        /^(public|private|protected|internal)?\s*(partial)?\s*class\s+(\w+)(?:<([^>]+)>)?(?:\s*:\s*([^{]+))?/,
+        /^(public|private|protected|internal)?\s*((?:(?:partial|sealed|static|new|unsafe|readonly)\s+)+)?class\s+(\w+)(?:<([^>]+)>)?(?:\s*:\s*([^{]+))?/,
       );
       if (classMatch) {
-        const className = classMatch[3]; // Adjusted index due to added partial group
-        const isPartial = classMatch[2] === "partial";
+        const className = classMatch[3];
+        const modifiersStr = classMatch[2] || "";
+        const isPartial = /\bpartial\b/.test(modifiersStr);
         const generics = classMatch[4]
           ? classMatch[4].split(",").map((s) => s.trim())
           : [];
@@ -1028,7 +1029,7 @@ export class CodeParser {
       // Match: [access] [modifiers] returnType methodName[<T>](params)
       // Also match constructors: [access] ClassName(params) [: base(...)]
       const methodMatch = trimmed.match(
-        /(public|private|protected|internal)?\s*(static|abstract|virtual|override)?\s*(\w+)\s+(\w+)\s*(?:<([^>]+)>)?\s*\(/,
+        /(public|private|protected|internal)?\s*((?:(?:static|abstract|virtual|override|sealed|new|async|extern)\s+)+)?(\w+)\s+(\w+)\s*(?:<([^>]+)>)?\s*\(/,
       );
 
       // Match constructors - handle both simple and with : base(...) calls
@@ -1093,7 +1094,7 @@ export class CodeParser {
           // Regular method
           methodName = methodMatch[4];
           access = methodMatch[1] || "private";
-          modifiers = methodMatch[2] ? [methodMatch[2]] : [];
+          modifiers = methodMatch[2] ? methodMatch[2].trim().split(/\s+/).filter(Boolean) : [];
           generics = methodMatch[5]
             ? methodMatch[5].split(",").map((s) => s.trim())
             : [];

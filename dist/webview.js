@@ -22994,11 +22994,11 @@
           }
         }
         const abstractMatch = trimmed.match(
-          /^(public|private|protected|internal)?\s*(partial)?\s*abstract\s+class\s+(\w+)(?:\s*:\s*([^{]+))?/
+          /^(public|private|protected|internal)?\s*((?:(?:partial|sealed|new|unsafe)\s+)+)?abstract\s+class\s+(\w+)(?:\s*:\s*([^{]+))?/
         );
         if (abstractMatch) {
           const inheritance = abstractMatch[4] ? abstractMatch[4].split(",").map((s) => s.trim()) : [];
-          const isPartial = abstractMatch[2] === "partial";
+          const isPartial = /\bpartial\b/.test(abstractMatch[2] || "");
           console.log(
             `🟣 C# Abstract class detected: ${abstractMatch[3]}${isPartial ? " (partial)" : ""}, inherits: [${inheritance.join(", ")}]`
           );
@@ -23019,11 +23019,12 @@
           continue;
         }
         const classMatch = trimmed.match(
-          /^(public|private|protected|internal)?\s*(partial)?\s*class\s+(\w+)(?:<([^>]+)>)?(?:\s*:\s*([^{]+))?/
+          /^(public|private|protected|internal)?\s*((?:(?:partial|sealed|static|new|unsafe|readonly)\s+)+)?class\s+(\w+)(?:<([^>]+)>)?(?:\s*:\s*([^{]+))?/
         );
         if (classMatch) {
           const className = classMatch[3];
-          const isPartial = classMatch[2] === "partial";
+          const modifiersStr = classMatch[2] || "";
+          const isPartial = /\bpartial\b/.test(modifiersStr);
           const generics = classMatch[4] ? classMatch[4].split(",").map((s) => s.trim()) : [];
           const inheritance = classMatch[5] ? classMatch[5].split(",").map((s) => s.trim()) : [];
           console.log(
@@ -23055,7 +23056,7 @@
           continue;
         }
         const methodMatch = trimmed.match(
-          /(public|private|protected|internal)?\s*(static|abstract|virtual|override)?\s*(\w+)\s+(\w+)\s*(?:<([^>]+)>)?\s*\(/
+          /(public|private|protected|internal)?\s*((?:(?:static|abstract|virtual|override|sealed|new|async|extern)\s+)+)?(\w+)\s+(\w+)\s*(?:<([^>]+)>)?\s*\(/
         );
         let constructorMatch = null;
         let isConstructor = false;
@@ -23091,7 +23092,7 @@
           } else {
             methodName = methodMatch[4];
             access = methodMatch[1] || "private";
-            modifiers = methodMatch[2] ? [methodMatch[2]] : [];
+            modifiers = methodMatch[2] ? methodMatch[2].trim().split(/\s+/).filter(Boolean) : [];
             generics = methodMatch[5] ? methodMatch[5].split(",").map((s) => s.trim()) : [];
             const paramMatch = trimmed.match(/\(([^)]*)\)/);
             params = paramMatch && paramMatch[1] ? paramMatch[1].split(",").map((s) => s.trim()).filter((s) => s) : [];
@@ -23527,8 +23528,15 @@
       if (!Array.isArray(classNodes) || classNodes.length === 0) return [];
       const childrenMap = /* @__PURE__ */ new Map();
       const parentMap = /* @__PURE__ */ new Map();
+      const bestNode = /* @__PURE__ */ new Map();
       classNodes.forEach((node) => {
         if (!node.name) return;
+        const existing = bestNode.get(node.name);
+        const curParents = this.getParentNames(node).length;
+        const exParents = existing ? this.getParentNames(existing).length : -1;
+        if (!existing || curParents > exParents) bestNode.set(node.name, node);
+      });
+      bestNode.forEach((node) => {
         if (!childrenMap.has(node.name)) childrenMap.set(node.name, []);
         const directParent = this.getParentNames(node)[0] || null;
         parentMap.set(node.name, directParent);
@@ -23537,7 +23545,7 @@
           childrenMap.get(directParent).push(node.name);
         }
       });
-      const classNames = classNodes.map((n) => n.name).filter(Boolean);
+      const classNames = [...bestNode.keys()];
       const roots = classNames.filter((name) => {
         const parent = parentMap.get(name);
         return !parent || !this.classNodeMap.has(parent);
@@ -23604,7 +23612,7 @@
       }
       for (let depth = 1; depth <= family.maxDepth; depth++) {
         const level = byDepth.get(depth) || [];
-        level.forEach((member, idx) => {
+        level.forEach((member) => {
           const siblings = level.filter((m) => m.parent === member.parent);
           const siblingIdx = siblings.findIndex((m) => m.className === member.className);
           const spread = siblings.length > 1 ? siblingIdx - (siblings.length - 1) / 2 : 0;
@@ -23633,7 +23641,8 @@
         roofType: ["flat", "pyramid", "spire", "dome"][this.familyStyles.size % 4],
         primaryColor: new Color().setHSL(hue / 360, 0.65, 0.52),
         accentColor: new Color().setHSL((hue + 22) % 360 / 360, 0.78, 0.56),
-        stripeColor: new Color().setHSL((hue + 12) % 360 / 360, 0.62, 0.42)
+        stripeColor: new Color().setHSL((hue + 12) % 360 / 360, 0.62, 0.42),
+        _rootName: familyMeta.root
       };
       this.familyStyles.set(familyMeta.root, style);
       return style;
@@ -23657,7 +23666,7 @@
       }
       const parentMethodNames = new Set(this.getMethodNames(parentNode));
       const explicitInheritedFlag = methodNode.isInherited === true || methodNode.inheritedFrom === true || methodNode.inheritedFromClass;
-      const isOverride = parentMethodNames.has(methodNode.name) || methodNode.overrides === true || Array.isArray(methodNode.modifiers) && methodNode.modifiers.includes("override");
+      const isOverride = parentMethodNames.has(methodNode.name) || !!methodNode.overrides || Array.isArray(methodNode.modifiers) && methodNode.modifiers.includes("override");
       if (explicitInheritedFlag && !isOverride) {
         return {
           markerType: "inherited",
@@ -23671,7 +23680,7 @@
         parentHasMethod: parentMethodNames.has(methodNode.name)
       };
     }
-    addFamilyRoof(buildingGroup, width, depth, totalHeight, familyStyle, depthLevel) {
+    addFamilyRoof(buildingGroup, width, depth, totalHeight, familyStyle, depthLevel, classNode = null) {
       if (!familyStyle) return;
       const roofColor = familyStyle.accentColor.clone().offsetHSL(0, 0, Math.min(0.12, depthLevel * 0.03));
       let roofMesh;
@@ -23716,6 +23725,10 @@
       }
       roofMesh.position.y = totalHeight + 1.1;
       roofMesh.userData.inheritanceFamilyRoof = true;
+      roofMesh.userData.indicatorType = "inheritance-roof";
+      roofMesh.userData.node = classNode;
+      roofMesh.userData.familyRoot = familyStyle._rootName || null;
+      roofMesh.userData.roofShape = familyStyle.roofType;
       buildingGroup.add(roofMesh);
     }
     createCity(ast, options) {
@@ -23727,7 +23740,11 @@
       this.colorScheme = this.getColorScheme(colorScheme);
       const classNodes = this.getClassNodes(ast);
       classNodes.forEach((node) => {
-        if (node.name) this.classNodeMap.set(node.name, node);
+        if (!node.name) return;
+        const existing = this.classNodeMap.get(node.name);
+        const curParents = (node.inherits || []).length;
+        const exParents = existing ? (existing.inherits || []).length : -1;
+        if (!existing || curParents > exParents) this.classNodeMap.set(node.name, node);
       });
       const families = this.detectInheritanceFamilies(classNodes);
       const estimatedGridSize = this.estimateGridSize(classNodes.length);
@@ -23898,7 +23915,7 @@
       const growth = Math.sqrt(classCount) * 16;
       return Math.max(60, Math.min(180, Math.round(base + growth)));
     }
-    createCompositionConnections(ast) {
+    createCompositionConnections(_ast) {
       const buildings = [];
       this.cityGroup.children.forEach((child) => {
         var _a;
@@ -23966,7 +23983,7 @@
         });
       });
     }
-    createInstantiationConnections(ast) {
+    createInstantiationConnections(_ast) {
       const buildings = [];
       this.cityGroup.traverse((child) => {
         var _a;
@@ -23976,7 +23993,6 @@
         const classNode = building.userData.node;
         const bw = building.userData._width || 5;
         const bh = building.userData._totalHeight || 10;
-        building.userData._depth || 5;
         const instantiated = /* @__PURE__ */ new Map();
         (classNode.children || []).forEach((method) => {
           (method.instantiates || []).forEach((cls) => {
@@ -23985,7 +24001,7 @@
         });
         if (!instantiated.size) return;
         const entries = Array.from(instantiated.entries());
-        entries.forEach(([targetName, count], idx) => {
+        entries.forEach(([targetName], idx) => {
           const total = entries.length;
           const spread = Math.min(bw * 0.7, total * 1.8);
           const offset = total === 1 ? 0 : (idx / (total - 1) - 0.5) * spread;
@@ -24137,7 +24153,7 @@
       districtGroup.add(label);
       this.cityGroup.add(districtGroup);
     }
-    createDependencyStreets(ast) {
+    createDependencyStreets(_ast) {
       const buildings = [];
       const nodeToBuilding = /* @__PURE__ */ new Map();
       this.cityGroup.children.forEach((child) => {
@@ -24158,7 +24174,7 @@
         if (node.children) {
           node.children.forEach((method) => {
             if (method.children) {
-              method.children.forEach((child) => {
+              method.children.forEach(() => {
               });
             }
           });
@@ -24296,11 +24312,13 @@
       buildingGroup.userData._width = width;
       buildingGroup.userData._depth = depth;
       buildingGroup.userData._totalHeight = totalHeight;
-      let baseColor = familyStyle ? familyStyle.primaryColor.clone().offsetHSL(0, 0, Math.min(0.12, ((familyMeta == null ? void 0 : familyMeta.depth) || 0) * 0.03)).getHex() : this.colorScheme.class;
+      let baseColor;
       if (classNode.type === "abstractClass") {
         baseColor = 9133302;
       } else if (classNode.type === "interface") {
         baseColor = 440020;
+      } else {
+        baseColor = 3900150;
       }
       const baseGeometry = new BoxGeometry(width, baseHeight, depth);
       const baseMaterial = new MeshPhongMaterial({
@@ -24322,7 +24340,8 @@
           depth,
           totalHeight,
           familyStyle,
-          (familyMeta == null ? void 0 : familyMeta.depth) || 0
+          (familyMeta == null ? void 0 : familyMeta.depth) || 0,
+          classNode
         );
         const stripeMaterial = new MeshBasicMaterial({
           color: familyStyle.stripeColor,
@@ -24336,6 +24355,9 @@
           );
           stripe.position.y = baseHeight + (i + 1) * totalHeight / 4;
           stripe.userData.inheritanceFamilyStripe = true;
+          stripe.userData.indicatorType = "inheritance-stripe";
+          stripe.userData.node = classNode;
+          stripe.userData.familyRoot = familyStyle._rootName || null;
           buildingGroup.add(stripe);
         }
       }
@@ -24405,7 +24427,8 @@
           buildingGroup,
           classNode.members,
           width,
-          depth
+          depth,
+          classNode
         );
       }
       if (classNode.compositions && classNode.compositions.length > 0) {
@@ -24449,7 +24472,7 @@
       this.cityGroup.add(buildingGroup);
       return buildingGroup;
     }
-    addCompositionAttachments(buildingGroup, classNode, width, depth, baseHeight) {
+    addCompositionAttachments(buildingGroup, classNode, width, _depth, baseHeight) {
       const compositions = Array.isArray(classNode.compositions) ? classNode.compositions : [];
       if (compositions.length === 0) return;
       const moduleColor = 35071;
@@ -24577,7 +24600,7 @@
       };
       return colors[type] || 16777215;
     }
-    addMembersAroundBuilding(buildingGroup, members, width, depth) {
+    addMembersAroundBuilding(buildingGroup, members, width, depth, classNode = null) {
       const baseRadius = Math.max(width, depth) / 2 + 0.5;
       const angleStep = Math.PI * 2 / members.length;
       members.forEach((member, index) => {
@@ -24601,6 +24624,7 @@
         const mesh = new Mesh(geometry, material);
         mesh.position.set(x, 1, z);
         mesh.userData.node = member;
+        mesh.userData.ownerClassName = (classNode == null ? void 0 : classNode.name) || null;
         buildingGroup.add(mesh);
         const memberLabelText = `${member.name}`;
         const label = this.createLabel(memberLabelText, memberColor);
@@ -24624,6 +24648,7 @@
       return colors[type] || 16777215;
     }
     createFloor(methodNode, width, depth, height, yPosition, ownerClassNode = null) {
+      var _a;
       const floorGroup = new Group();
       const inheritanceInfo = ownerClassNode ? this.classifyMethodByInheritance(ownerClassNode, methodNode) : { markerType: "child", parentName: null };
       console.log(`📐 Creating floor for ${methodNode.name}:`, {
@@ -24775,12 +24800,15 @@
         });
         accessIndicator.userData.node = methodNode;
         accessIndicator.userData.oopConcept = "encapsulation";
+        accessIndicator.userData.indicatorType = `access-${methodNode.access || "public"}`;
+        accessIndicator.userData.ownerClassName = (ownerClassNode == null ? void 0 : ownerClassNode.name) || null;
         floorGroup.add(accessIndicator);
         console.log(
           `   ✅ Access indicator added to floorGroup. FloorGroup has ${floorGroup.children.length} children`
         );
       }
-      if (methodNode.overrides) {
+      const hasOverride = methodNode.overrides || ((_a = methodNode.modifiers) == null ? void 0 : _a.includes("override"));
+      if (hasOverride) {
         const teal = new MeshBasicMaterial({ color: 58824 });
         const tealBright = new MeshBasicMaterial({ color: 65488, depthTest: false });
         const pole = new Mesh(new CylinderGeometry(0.22, 0.22, height * 0.85, 8), teal);
@@ -24823,6 +24851,8 @@
         virtualIndicator.renderOrder = 1e3;
         virtualIndicator.userData.node = methodNode;
         virtualIndicator.userData.oopConcept = "polymorphism-virtual";
+        virtualIndicator.userData.indicatorType = "polymorphism-virtual";
+        virtualIndicator.userData.ownerClassName = (ownerClassNode == null ? void 0 : ownerClassNode.name) || null;
         floorGroup.add(virtualIndicator);
       }
       if (methodNode.isAbstract && !methodNode.isConstructor) {
@@ -24841,7 +24871,18 @@
         );
         abstractFrame.userData.node = methodNode;
         abstractFrame.userData.oopConcept = "polymorphism-abstract";
+        abstractFrame.userData.indicatorType = "polymorphism-abstract";
+        abstractFrame.userData.ownerClassName = (ownerClassNode == null ? void 0 : ownerClassNode.name) || null;
         floorGroup.add(abstractFrame);
+        const abstractHitArea = new Mesh(
+          new BoxGeometry(1.4, 1.4, 1.4),
+          new MeshBasicMaterial({ visible: false })
+        );
+        abstractHitArea.position.copy(abstractFrame.position);
+        abstractHitArea.userData.node = methodNode;
+        abstractHitArea.userData.indicatorType = "polymorphism-abstract";
+        abstractHitArea.userData.ownerClassName = (ownerClassNode == null ? void 0 : ownerClassNode.name) || null;
+        floorGroup.add(abstractHitArea);
       }
       if (methodNode.isConstructor === true || methodNode.isConstructor) {
         console.log(
@@ -24866,6 +24907,8 @@
         constructorIndicator.renderOrder = 999;
         constructorIndicator.userData.node = methodNode;
         constructorIndicator.userData.isConstructorIndicator = true;
+        constructorIndicator.userData.indicatorType = "constructor";
+        constructorIndicator.userData.ownerClassName = (ownerClassNode == null ? void 0 : ownerClassNode.name) || null;
         floorGroup.add(constructorIndicator);
         console.log(`   ✅ Constructor indicator added`);
       }
@@ -25205,7 +25248,7 @@
       };
       return schemes[name] || schemes.default;
     }
-    createInheritanceConnections(ast) {
+    createInheritanceConnections(_ast) {
       var _a;
       if (!((_a = this.inheritanceFamilies) == null ? void 0 : _a.length)) return;
       this.inheritanceFamilies.forEach((family) => {
@@ -25279,8 +25322,7 @@
         this.cityGroup.add(plaque);
       });
     }
-    createPolymorphismConnections(ast) {
-      return;
+    createPolymorphismConnections(_ast) {
     }
     clear() {
       while (this.cityGroup.children.length > 0) {
@@ -27219,8 +27261,6 @@
       }
       if (!ud.node && !ud.isMainFloorMesh && !ud.indicatorType && !ud.isConstructorIndicator && !ud.oopConcept) return;
       if (ud.isOutlineMesh) return;
-      if (ud.inheritanceFamilyRoof) return;
-      if (ud.inheritanceFamilyStripe) return;
       if (ud.compositionIndicator) return;
       if (ud.instantiationIndicator) return;
       const mat = obj.material;
@@ -27389,14 +27429,12 @@
     if (indicatorType) {
       const lesson2 = getLesson(node, indicatorType);
       const iname = node.name || "?";
-      const icons = { constructor: "🔧", override: "🔀", "polymorphism-override": "🔀", virtual: "◈", "polymorphism-virtual": "◈", abstract: "◇", "polymorphism-abstract": "◇", "access-public": "🌐", "access-private": "🔒", "access-protected": "🛡" };
-      const icon = icons[indicatorType] || "◆";
-      const itype = indicatorType.replace("access-", "").replace("polymorphism-", "");
       return `
-      <div class="tt-header">${icon} <b>${iname}</b> <span class="type-badge" style="background:${(lesson2 == null ? void 0 : lesson2.color) || "#6b7280"}22;color:${(lesson2 == null ? void 0 : lesson2.color) || "#6b7280"};border-color:${(lesson2 == null ? void 0 : lesson2.color) || "#6b7280"}44">${itype.toUpperCase()}</span></div>
+      ${indicatorStrip(indicatorType, lesson2, extra)}
+      <div class="tt-header">⚙ <b>${iname}</b></div>
       ${ownerName ? `<div class="tt-owner">↳ in <b>${ownerName}</b></div>` : ""}
       ${node.lineStart ? `<div class="tt-line">L${node.lineStart}–${node.lineEnd || node.lineStart}</div>` : ""}
-      <div class="tt-body">${lesson2 ? lesson2.what.substring(0, 110) + "…" : ""}</div>
+      ${lesson2 ? `<div class="tt-body">${lesson2.what.substring(0, 110)}…</div>` : ""}
       <div class="tt-hint">Click for full lesson · Ctrl+Click to open file</div>`.trim();
     }
     const concepts = detectOOPConcepts(node);
@@ -27410,18 +27448,18 @@
     const inh = (node.inherits || []).length ? `<div class="tt-inh">extends <b>${node.inherits.join(", ")}</b></div>` : "";
     const mcount = (node.children || []).filter((d) => d.type === "method" || d.type === "function").length;
     const methods = mcount > 0 ? `<div class="tt-methods">⚙ ${mcount} method${mcount !== 1 ? "s" : ""}</div>` : "";
-    const access = (node.type === "method" || node.type === "function") && node.access ? `<div class="tt-access">${node.access === "private" ? "🔒" : node.access === "protected" ? "🛡" : "🌐"} <b>${node.access}</b></div>` : "";
     const lesson = getLesson(node, null);
     const snippet = lesson ? `<div class="tt-body">${lesson.what.substring(0, 100)}…</div>` : "";
     return `
-    <div class="tt-header">${nodeIcon(node.type)} <b>${node.name || "?"}</b> ${typeBadge(node.type)}</div>
-    ${owner}${lines}${inh}${access}${params}${methods}${cx}
+    ${typeStrip(node)}
+    <div class="tt-header"><b>${node.name || "?"}</b></div>
+    ${owner}${lines}${inh}${params}${methods}${cx}
     ${snippet}
     ${badges ? `<div class="tt-concepts">${badges}</div>` : ""}
     <div class="tt-hint">Click for full lesson · Ctrl+Click to open file</div>
   `.trim();
   }
-  function detectOOPConcepts(node, ownerName) {
+  function detectOOPConcepts(node) {
     const c = [], t = node.type;
     if ((node.inherits || []).length > 0) c.push({ icon: "🔗", label: "Inheritance", color: "#a78bfa", desc: `Extends ${node.inherits.join(", ")}` });
     if ((node.implements || []).length > 0) c.push({ icon: "📋", label: "Interface", color: "#22d3ee", desc: `Implements ${node.implements.join(", ")}` });
@@ -27888,7 +27926,6 @@
     const implHTML = (node.implements || []).length ? `
     <div class="section-title">📋 Implements</div>
     <div class="inherit-list">${node.implements.map((i) => `<div class="inherit-row"><b>${i}</b></div>`).join("")}</div>` : "";
-    getCityRole(node);
     return `
     <div class="panel-header">
       <span class="panel-icon">${nodeIcon(node.type)}</span>
@@ -27906,17 +27943,6 @@
     <div class="edu-wrap">${buildEduHTML(node, ownerName, indicatorType || null)}</div>
     ${conceptsHTML}${inhHTML}${implHTML}${methodsHTML}${propsHTML}
   `;
-  }
-  function getCityRole(node) {
-    const t = node.type, mc = (node.children || []).filter((c) => c.type === "method").length, pc = (node.members || []).length, cx = node.complexity || 1;
-    const roles = {
-      class: `🏙 A <b>building</b> with <b>${mc} floor${mc !== 1 ? "s" : ""}</b> (methods) and <b>${pc} room${pc !== 1 ? "s" : ""}</b> (properties).${cx > 5 ? " Its towering height signals high complexity — a candidate for refactoring." : ""}`,
-      abstractClass: `🏗 An <b>unfinished skyscraper</b> — the blueprint is defined but it cannot stand alone. Subclasses must complete construction.`,
-      interface: `📐 A <b>zoning law</b> — dictates what any building in this district must provide, without specifying how it is built.`,
-      method: `🏢 A single <b>floor</b> in its building.${node.overrides ? ` The orange stripe shows it <b>overrides</b> the same floor in the parent building (${node.overrides}).` : ""}${node.isAbstract ? " Marked with scaffolding — a subclass must fill this floor." : ""}`,
-      function: `⚙ A standalone <b>workshop</b> — not part of a building, operates independently.`
-    };
-    return roles[t] || `<b>${t}</b> at line ${node.lineStart || "?"}.`;
   }
   const FILTERS = {
     classes: { label: "Classes", icon: "🏛", active: true },
@@ -27973,31 +27999,51 @@
     legendEl.innerHTML = `
     <div class="legend-title">🗺 Legend <button class="legend-toggle-btn" id="legend-toggle">Hide</button></div>
     <div class="legend-items" id="legend-items">
-      <div class="legend-section">BUILDINGS</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#3b82f6"></span> Blue = Class</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#8b5cf6"></span> Purple = Abstract Class</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#06b6d4"></span> Cyan = Interface</div>
-      <div class="legend-row" style="font-size:9px;color:#4b5563">Taller = more methods · Wider = more properties</div>
-      <div class="legend-section">FLOOR COLOUR = ACCESS</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#e5c000"></span> Yellow = Public</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#374151;border:1px solid #555"></span> Dark = Private</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#b45309"></span> Amber = Protected</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#4338ca"></span> Indigo = Abstract</div>
-      <div class="legend-section">FLOOR INDICATORS</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#22c55e;border-radius:50%"></span> 🌐 Sphere = Public</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#ef4444"></span> 🔒 Diamond = Private</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#f59e0b"></span> 🛡 Pyramid = Protected</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#d946ef"></span> 🔧 Cube = Constructor</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#00e5c8"></span> ↑ Teal arrow = Override</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#60a5fa;border-radius:50%"></span> · Blue dot = Inherited</div>
-      <div class="legend-section">RELATIONSHIPS</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#1e3a1e;border:1px solid #4ade80"></span> Platform = Inheritance</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#1a6fbf"></span> Annex = Composition</div>
-      <div class="legend-row"><span class="legend-swatch" style="background:#ff4400;border-radius:50%"></span> 🏭 Chimney = new X()</div>
-      <div class="legend-section">USE</div>
-      <div class="legend-row">Hover = name · Click = lesson</div>
-      <div class="legend-row">Double-click = enter building</div>
-      <div class="legend-row">Ctrl+Click = open in editor</div>
+
+      <div class="legend-section">① BUILDING BASE — what type is it?</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#3b82f6"></span> Blue base = Regular Class</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#8b5cf6"></span> Purple base = Abstract Class</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#06b6d4"></span> Cyan base = Interface</div>
+      <div class="legend-row legend-note">Taller building = more methods · Wider = more properties</div>
+
+      <div class="legend-section">② ROOF + STRIPES — who does it inherit from?</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:linear-gradient(135deg,#f59e0b,#10b981,#a78bfa)"></span> Roof &amp; stripe colour = inheritance group</div>
+      <div class="legend-row legend-note">Classes with the <b style="color:#94a3b8">same colour roof</b> all inherit</div>
+      <div class="legend-row legend-note">from the same base class (e.g. all extend Animal)</div>
+      <div class="legend-row legend-note">Roof <b style="color:#94a3b8">shape</b> also groups them — same shape,</div>
+      <div class="legend-row legend-note">same parent (flat/pyramid/spire/dome per group)</div>
+      <div class="legend-row legend-note">No roof = does not inherit from anything</div>
+
+      <div class="legend-section">③ FLOORS — one per method</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#e5c000"></span> Yellow floor = Public method</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#374151;border:1px solid #555"></span> Dark floor = Private method</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#b45309"></span> Amber floor = Protected method</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#4338ca"></span> Indigo floor = Abstract method</div>
+
+      <div class="legend-section">④ SHAPES ON FLOORS — access + OOP markers</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#22c55e;border-radius:50%"></span> Green sphere = Public access</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#f59e0b;clip-path:polygon(50% 0%,0% 100%,100% 100%)"></span> Yellow triangle = Protected access</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ef4444;transform:rotate(45deg)"></span> Red diamond = Private access</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ff00ff"></span> Magenta cube = Constructor</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#00e5c8"></span> Teal arrow pole = Override (replaces parent)</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ff8800"></span> Orange strip = Virtual method (can be overridden)</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ffff00"></span> Yellow frame = Abstract method (must be implemented)</div>
+
+      <div class="legend-section">⑤ SMALL CUBES AROUND BASE — properties</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#00ff88"></span> Green cube = Property / Field</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ff6600"></span> Orange cube = Constant</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#9932cc"></span> Purple cube = Static member</div>
+
+      <div class="legend-section">⑥ RELATIONSHIPS</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#1e3a1e;border:1px solid #4ade80"></span> Shared platform = Inheritance family</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#1a6fbf"></span> Side annex = Composition (has-a)</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#ff4400;border-radius:50%"></span> Chimney = Instantiation (new X())</div>
+
+      <div class="legend-section">⑦ HOW TO USE</div>
+      <div class="legend-row">Hover any shape → tooltip explains it</div>
+      <div class="legend-row">Click → full OOP lesson</div>
+      <div class="legend-row">Double-click building → enter it</div>
+      <div class="legend-row">Ctrl+Click → open file in editor</div>
     </div>`;
     document.getElementById("legend-toggle").addEventListener("click", (e) => {
       const el = document.getElementById("legend-items");
@@ -28073,7 +28119,7 @@
     requestAnimationFrame(tick);
   }
   function getNodeInfo(mesh) {
-    var _a;
+    var _a, _b;
     const ud = mesh.userData || {};
     if (ud.compositionModule || ud.compositionAnnex || ud.compositionBadge || ud.compositionWalkway) {
       return {
@@ -28105,6 +28151,15 @@
         parentClass: ud.parentClass || null
       };
     }
+    if (ud.inheritanceFamilyRoof || ud.inheritanceFamilyStripe || ud.indicatorType === "inheritance-roof" || ud.indicatorType === "inheritance-stripe") {
+      return {
+        node: ud.node || null,
+        ownerName: null,
+        indicatorType: ud.inheritanceFamilyRoof || ud.indicatorType === "inheritance-roof" ? "inheritance-roof" : "inheritance-stripe",
+        familyRoot: ud.familyRoot || null,
+        roofShape: ud.roofShape || null
+      };
+    }
     if (ud.indicatorType || ud.isConstructorIndicator || ud.oopConcept) {
       return {
         node: ud.node || null,
@@ -28114,9 +28169,23 @@
     }
     if (ud.node && (ud.node.type === "method" || ud.node.type === "function"))
       return { node: ud.node, ownerName: ud.ownerClassName || null };
+    if (ud.node && (ud.node.type === "property" || ud.node.type === "attribute" || ud.node.type === "field" || ud.node.type === "constant" || ud.node.type === "static")) {
+      let ownerName = ud.ownerClassName || null;
+      if (!ownerName) {
+        let cur2 = mesh.parent;
+        while (cur2) {
+          if (((_a = cur2.userData) == null ? void 0 : _a.isBuilding) && cur2.userData.node) {
+            ownerName = cur2.userData.node.name;
+            break;
+          }
+          cur2 = cur2.parent;
+        }
+      }
+      return { node: ud.node, ownerName };
+    }
     let cur = mesh;
     while (cur) {
-      if (((_a = cur.userData) == null ? void 0 : _a.isBuilding) && cur.userData.node)
+      if (((_b = cur.userData) == null ? void 0 : _b.isBuilding) && cur.userData.node)
         return { node: cur.userData.node, ownerName: null };
       cur = cur.parent;
     }
@@ -28191,7 +28260,7 @@
     openDetailPanel(node, ownerName, null, ninfo);
     flyTo(mesh);
   });
-  renderer.domElement.addEventListener("dblclick", (e) => {
+  renderer.domElement.addEventListener("dblclick", () => {
     var _a;
     if (insideViewActive) return;
     raycaster.setFromCamera(mouse, camera);
@@ -28303,6 +28372,57 @@
     const m = { class: ["CLASS", "#3b82f6"], abstractClass: ["ABSTRACT", "#8b5cf6"], interface: ["INTERFACE", "#06b6d4"], method: ["METHOD", "#10b981"], function: ["FUNC", "#10b981"], constructor: ["CTOR", "#f59e0b"], property: ["PROP", "#6b7280"], attribute: ["ATTR", "#6b7280"], field: ["FIELD", "#6b7280"] };
     const [l, c] = m[t] || ["NODE", "#6b7280"];
     return `<span class="type-badge" style="background:${c}22;color:${c};border-color:${c}44">${l}</span>`;
+  }
+  function typeStrip(node) {
+    const MAP = {
+      class: { label: "CLASS", desc: "A blueprint — objects are created from this", icon: "🏛", color: "#3b82f6" },
+      abstractClass: { label: "ABSTRACT CLASS", desc: "Cannot be created directly — must be extended first", icon: "🔷", color: "#8b5cf6" },
+      interface: { label: "INTERFACE", desc: "A contract — any class that implements it must follow these rules", icon: "📋", color: "#06b6d4" },
+      method: { label: "METHOD", desc: "A function that belongs to a class", icon: "⚙", color: "#10b981" },
+      function: { label: "FUNCTION", desc: "A standalone block of reusable logic", icon: "⚙", color: "#10b981" },
+      constructor: { label: "CONSTRUCTOR", desc: "Runs automatically when a new object is created", icon: "🔧", color: "#f59e0b" },
+      property: { label: "PROPERTY", desc: "Data stored inside this class", icon: "▪", color: "#64748b" },
+      attribute: { label: "PROPERTY", desc: "Data stored inside this class", icon: "▪", color: "#64748b" },
+      field: { label: "FIELD", desc: "Data stored inside this class", icon: "▪", color: "#64748b" }
+    };
+    const resolvedType = node.isAbstract && node.type === "class" ? "abstractClass" : node.type;
+    const info = MAP[resolvedType] || { label: (node.type || "NODE").toUpperCase(), desc: "", icon: "◆", color: "#6b7280" };
+    let accessBadge = "";
+    if ((node.type === "method" || node.type === "function" || node.type === "constructor") && node.access) {
+      const ac = { public: "#10b981", protected: "#f59e0b", private: "#ef4444" }[node.access] || "#6b7280";
+      const ai = { public: "🌐", protected: "🛡", private: "🔒" }[node.access] || "◆";
+      accessBadge = `<span class="ts-access" style="background:${ac}22;color:${ac};border:1px solid ${ac}44">${ai} ${node.access.toUpperCase()}</span>`;
+    }
+    return `<div class="type-strip" style="border-left:3px solid ${info.color};background:${info.color}18">
+    <div class="ts-label" style="color:${info.color}">${info.icon} ${info.label}${accessBadge}</div>
+    <div class="ts-desc">${info.desc}</div>
+  </div>`;
+  }
+  function indicatorStrip(indicatorType, lesson, extra) {
+    const MAP = {
+      constructor: { label: "CONSTRUCTOR MARKER", desc: "This method initialises a new object when created", icon: "🔧", color: "#f59e0b" },
+      override: { label: "OVERRIDE MARKER", desc: "This method replaces a version inherited from a parent class", icon: "🔀", color: "#00e5c8" },
+      "polymorphism-override": { label: "OVERRIDE MARKER", desc: "This method replaces a version inherited from a parent class", icon: "🔀", color: "#00e5c8" },
+      virtual: { label: "VIRTUAL METHOD MARKER", desc: "Parent class says: subclasses are allowed to replace this method", icon: "◈", color: "#f59e0b" },
+      "polymorphism-virtual": { label: "VIRTUAL METHOD MARKER", desc: "Parent class says: subclasses are allowed to replace this method", icon: "◈", color: "#f59e0b" },
+      abstract: { label: "ABSTRACT METHOD MARKER", desc: "No body here — subclasses MUST implement this method themselves", icon: "◇", color: "#8b5cf6" },
+      "polymorphism-abstract": { label: "ABSTRACT METHOD MARKER", desc: "No body here — subclasses MUST implement this method themselves", icon: "◇", color: "#8b5cf6" },
+      "access-public": { label: "PUBLIC ACCESS", desc: "Anyone can call this — fully open", icon: "🌐", color: "#10b981" },
+      "access-protected": { label: "PROTECTED ACCESS", desc: "Only this class and its subclasses can call this", icon: "🛡", color: "#f59e0b" },
+      "access-private": { label: "PRIVATE ACCESS", desc: "Only this class itself can use this — hidden from outside", icon: "🔒", color: "#ef4444" },
+      "inheritance-roof": { label: "INHERITANCE ROOF", desc: "", icon: "🏠", color: "#a78bfa" },
+      "inheritance-stripe": { label: "INHERITANCE STRIPE", desc: "", icon: "▬", color: "#a78bfa" }
+    };
+    let info = MAP[indicatorType] || { label: indicatorType.toUpperCase(), desc: "", icon: "◆", color: (lesson == null ? void 0 : lesson.color) || "#6b7280" };
+    if (indicatorType === "inheritance-roof" || indicatorType === "inheritance-stripe") {
+      const family = (extra == null ? void 0 : extra.familyRoot) ? `the <b>${extra.familyRoot}</b>` : "an";
+      const shape = (extra == null ? void 0 : extra.roofShape) ? ` (${extra.roofShape} style)` : "";
+      info = { ...info, desc: `This building is part of ${family} inheritance family${shape}. All buildings with this same colour roof and stripes inherit from the same base class.` };
+    }
+    return `<div class="ts-indicator-strip" style="border-left:3px solid ${info.color};background:${info.color}18">
+    <div class="ts-indicator-label" style="color:${info.color}">${info.icon} ${info.label}</div>
+    <div class="ts-indicator-sub" style="color:#94a3b8">${info.desc}</div>
+  </div>`;
   }
   function methodIcon(m) {
     if (m.isConstructor || m.type === "constructor") return "🔧";
