@@ -22270,6 +22270,10 @@
         const indent = line.length - line.trimStart().length;
         const indentLevel = Math.floor(indent / 4);
         while (indentStack.length > 1 && indentStack[indentStack.length - 1].indent >= indentLevel) {
+          const exiting = indentStack[indentStack.length - 1].node;
+          if (exiting.lineEnd <= exiting.lineStart) {
+            exiting.lineEnd = lineNumber - 1;
+          }
           indentStack.pop();
         }
         const parent = indentStack[indentStack.length - 1].node;
@@ -22592,6 +22596,11 @@
             };
             parent.children.push(statementNode);
           }
+        }
+      }
+      for (const item of indentStack) {
+        if (item.node.lineEnd <= item.node.lineStart) {
+          item.node.lineEnd = lines.length;
         }
       }
       this.calculateMetrics(ast);
@@ -22927,7 +22936,7 @@
       return ast;
     }
     parseCSharp(code) {
-      var _a, _b, _c, _d;
+      var _a, _b, _c;
       const lines = code.split("\n");
       const ast = {
         type: "module",
@@ -23125,39 +23134,17 @@
             });
           }
           let overrides = null;
-          if (isOverride && currentClass.inherits && currentClass.inherits.length > 0) {
-            console.log(
-              `🔎 C# Override detected for ${methodName} in ${currentClass.name}, parent: ${currentClass.inherits[0]}`
-            );
-            const parentClass = this.findClassByName(
-              ast,
-              currentClass.inherits[0]
-            );
-            if (parentClass) {
-              console.log(
-                `  ✅ C# Found parent class: ${parentClass.name}, children count: ${((_a = parentClass.children) == null ? void 0 : _a.length) || 0}`
-              );
-              const parentMethod = this.findMethodInClass(
-                parentClass,
-                methodName
-              );
-              if (parentMethod) {
-                console.log(
-                  `  ✅ C# Found parent method: ${parentMethod.name}, modifiers: [${((_b = parentMethod.modifiers) == null ? void 0 : _b.join(", ")) || "none"}], isAbstract: ${parentMethod.isAbstract}, isVirtual: ${parentMethod.isVirtual}`
-                );
-                if (((_c = parentMethod.modifiers) == null ? void 0 : _c.includes("virtual")) || ((_d = parentMethod.modifiers) == null ? void 0 : _d.includes("abstract")) || parentMethod.isAbstract || parentMethod.isVirtual) {
+          if (isOverride && ((_a = currentClass.inherits) == null ? void 0 : _a.length) > 0) {
+            for (const parentName of currentClass.inherits) {
+              const parentClass = this.findClassByName(ast, parentName);
+              if (parentClass) {
+                const parentMethod = this.findMethodInClass(parentClass, methodName);
+                if (parentMethod && (((_b = parentMethod.modifiers) == null ? void 0 : _b.includes("virtual")) || ((_c = parentMethod.modifiers) == null ? void 0 : _c.includes("abstract")) || parentMethod.isAbstract || parentMethod.isVirtual)) {
                   overrides = parentMethod.name;
-                  console.log(`  ✅ C# Setting overrides to: ${overrides}`);
-                } else {
-                  console.log(`  ❌ C# Parent method is not virtual/abstract`);
+                  console.log(`  ✅ C# ${methodName} overrides ${parentName}.${overrides}`);
+                  break;
                 }
-              } else {
-                console.log(`  ❌ C# Parent method not found: ${methodName}`);
               }
-            } else {
-              console.log(
-                `  ❌ C# Parent class not found: ${currentClass.inherits[0]}`
-              );
             }
           }
           let isOverloaded = false;
@@ -23424,6 +23411,20 @@
           currentBlock = null;
         }
       }
+      const separateImplements = (node) => {
+        if (node.type === "class" || node.type === "abstractClass") {
+          const implementsList = [];
+          for (const name of node.inherits || []) {
+            const found = this.findClassByName(ast, name);
+            if (found && found.type === "interface" || /^I[A-Z]/.test(name)) {
+              implementsList.push(name);
+            }
+          }
+          node.implements = implementsList;
+        }
+        if (node.children) node.children.forEach(separateImplements);
+      };
+      separateImplements(ast);
       this.calculateMetrics(ast);
       this.detectObjectInstantiation(ast, code, "csharp");
       return ast;
