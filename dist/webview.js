@@ -25030,6 +25030,7 @@
         }
       }
       floorGroup.userData.node = methodNode;
+      floorGroup.userData.isFloorGroup = true;
       return floorGroup;
     }
     createEmptyFloor(width, depth, height, yPosition) {
@@ -27068,7 +27069,7 @@
     resolveRelationships(ast) {
       const findClass = (className) => {
         for (const child of ast.children) {
-          if (child && (child.type === "class" || child.type === "abstractClass") && child.name === className) {
+          if (child && (child.type === "class" || child.type === "abstractClass" || child.type === "interface") && child.name === className) {
             return child;
           }
         }
@@ -27088,16 +27089,21 @@
           continue;
         if (!classNode.children || !classNode.inherits || classNode.inherits.length === 0)
           continue;
-        const parentClass = findClass(classNode.inherits[0]);
-        if (!parentClass) continue;
-        for (const method of classNode.children) {
-          if (!method || method.type !== "method") continue;
-          const hasOverride = method.modifiers && method.modifiers.includes("override");
-          if (!hasOverride) continue;
-          const parentMethod = findMethod(parentClass, method.name);
-          if (parentMethod) {
-            const isVirtualOrAbstract = parentMethod.modifiers && (parentMethod.modifiers.includes("virtual") || parentMethod.modifiers.includes("abstract")) || parentMethod.isVirtual || parentMethod.isAbstract;
-            if (isVirtualOrAbstract) {
+        for (const parentName of classNode.inherits) {
+          const parentClass = findClass(parentName);
+          if (!parentClass) continue;
+          for (const method of classNode.children) {
+            if (!method || method.type !== "method") continue;
+            if (method.overrides) continue;
+            const hasOverride = method.modifiers && method.modifiers.includes("override");
+            const parentMethod = findMethod(parentClass, method.name);
+            if (!parentMethod) continue;
+            if (hasOverride) {
+              const isVirtualOrAbstract = parentMethod.modifiers && (parentMethod.modifiers.includes("virtual") || parentMethod.modifiers.includes("abstract")) || parentMethod.isVirtual || parentMethod.isAbstract;
+              if (isVirtualOrAbstract) {
+                method.overrides = parentMethod.name;
+              }
+            } else if (parentMethod.isAbstract || parentMethod.isVirtual) {
               method.overrides = parentMethod.name;
             }
           }
@@ -27623,6 +27629,34 @@
     }
     return key ? EDU[key] : null;
   }
+  function findClassNode(name) {
+    var _a;
+    for (const m of clickMeshes) {
+      const n = (_a = m.userData) == null ? void 0 : _a.node;
+      if (n && (n.type === "class" || n.type === "abstractClass" || n.type === "interface") && n.name === name) return n;
+    }
+    return null;
+  }
+  function buildInheritedMethodsHTML(parentNode, childNode) {
+    if (!parentNode) return "";
+    const parentMethods = (parentNode.children || []).filter((c) => c.type === "method" || c.type === "function" || c.type === "constructor");
+    if (!parentMethods.length) return "";
+    const childOverrides = new Set(((childNode == null ? void 0 : childNode.children) || []).filter((c) => c.overrides || (c.modifiers || []).includes("override")).map((c) => c.name));
+    const rows = parentMethods.map((m) => {
+      const isOverridden = childOverrides.has(m.name);
+      const icon = methodIcon(m);
+      const accessIcon2 = m.access === "private" ? "🔒" : m.access === "protected" ? "🛡" : "🌐";
+      const status = isOverridden ? `<span style="color:#00e5c8;font-size:11px">↑ overridden by ${(childNode == null ? void 0 : childNode.name) || "child"}</span>` : `<span style="color:#6b7280;font-size:11px">✓ inherited</span>`;
+      return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #1e293b">
+      <span style="font-size:13px">${icon}</span>
+      <span style="flex:1;color:#e2e8f0;font-size:13px">${m.name}</span>
+      <span style="font-size:11px">${accessIcon2}</span>
+      ${status}
+    </div>`;
+    }).join("");
+    const label = childNode ? `What <b>${childNode.name}</b> gets from <b>${parentNode.name}</b>` : `Methods from <b>${parentNode.name}</b>`;
+    return `<div class="edu-section"><div class="edu-label">📋 Inherited methods — ${label}</div><div class="edu-body" style="padding:0">${rows}</div></div>`;
+  }
   function getLineLessonHTML(lineType, source, target) {
     const L = {
       inheritance: {
@@ -27660,13 +27694,15 @@
     };
     const l = L[lineType];
     if (!l) return null;
+    const inheritedSection = lineType === "inheritance" ? buildInheritedMethodsHTML(findClassNode(target), findClassNode(source)) : "";
     return `<div class="edu-header" style="border-color:${l.color}44;background:${l.color}11">
     <span class="edu-icon">${l.icon}</span>
     <div><div class="edu-concept" style="color:${l.color}">${l.label}</div>
     <div class="edu-name">${source} ➜ ${target}</div></div></div>
     <div class="edu-section"><div class="edu-label">📖 What is it?</div><div class="edu-body">${l.what}</div></div>
     <div class="edu-section"><div class="edu-label">🏙 In this city</div><div class="edu-body">${l.city}</div></div>
-    <div class="edu-section"><div class="edu-label">💡 Analogy</div><div class="edu-body">${l.analogy}</div></div>`;
+    <div class="edu-section"><div class="edu-label">💡 Analogy</div><div class="edu-body">${l.analogy}</div></div>
+    ${inheritedSection}`;
   }
   function buildEduHTML(node, ownerName, indicatorType) {
     const lesson = getLesson(node, indicatorType);
@@ -27716,7 +27752,9 @@
       thisElement = `<b>${name}</b> is a class${inClass} that defines a reusable blueprint. It has <b>${mc} method${mc !== 1 ? "s" : ""}</b> (what it can do) and <b>${pc} propert${pc !== 1 ? "ies" : "y"}</b> (what it stores).`;
       if (inherits.length) {
         thisElement += ` It extends <b>${inherits.join(", ")}</b>, which means it inherits all of that class's behaviour and can add its own.`;
-        whySection = `<div class="edu-section"><div class="edu-label">🔗 Why it inherits</div><div class="edu-body"><b>${name}</b> is a more specialised version of <b>${inherits[0]}</b>. Any code that can use a <b>${inherits[0]}</b> can also use a <b>${name}</b> — this is the Liskov Substitution Principle in action.</div></div>`;
+        const parentNode = findClassNode(inherits[0]);
+        const inheritedHTML = buildInheritedMethodsHTML(parentNode, node);
+        whySection = `<div class="edu-section"><div class="edu-label">🔗 Why it inherits</div><div class="edu-body"><b>${name}</b> is a more specialised version of <b>${inherits[0]}</b>. Any code that can use a <b>${inherits[0]}</b> can also use a <b>${name}</b> — this is the Liskov Substitution Principle in action.</div></div>${inheritedHTML}`;
       }
       if (impls.length) {
         thisElement += ` It implements <b>${impls.join(", ")}</b>, committing to provide all the methods those interfaces require.`;
@@ -27977,6 +28015,7 @@
     inheritance: { label: "Inheritance", icon: "🔗", active: true },
     composition: { label: "Composition", icon: "◆", active: true },
     instantiation: { label: "Instantiation", icon: "✦", active: true },
+    polymorphism: { label: "Polymorphism", icon: "🔀", active: true },
     highComplexity: { label: "High Cx", icon: "🔥", active: false }
   };
   function buildFilterPanel() {
@@ -28013,10 +28052,11 @@
         else if (t === "interface" && !FILTERS.interfaces.active) vis = false;
         else if (t === "class" && !FILTERS.classes.active) vis = false;
       }
-      if (ud.isMainFloorMesh && ud.node && !FILTERS.methods.active) vis = false;
-      if (ud.compositionLine && !FILTERS.composition.active) vis = false;
-      if (ud.instantiationLine && !FILTERS.instantiation.active) vis = false;
-      if (ud.inheritanceLine && !FILTERS.inheritance.active) vis = false;
+      if (ud.isFloorGroup && !FILTERS.methods.active) vis = false;
+      if ((ud.compositionModule || ud.compositionAnnex || ud.compositionWalkway) && !FILTERS.composition.active) vis = false;
+      if ((ud.instantiationChimney || ud.instantiationPuff) && !FILTERS.instantiation.active) vis = false;
+      if ((ud.inheritancePlinth || ud.inheritanceRidge || ud.inheritanceFamilyStripe || ud.inheritanceFamilyRoof) && !FILTERS.inheritance.active) vis = false;
+      if ((ud.inheritanceMethodMarker || ud.indicatorType === "override" || ud.indicatorType === "polymorphism-virtual" || ud.indicatorType === "polymorphism-abstract") && !FILTERS.polymorphism.active) vis = false;
       if (obj.visible !== vis) obj.visible = vis;
     });
   }

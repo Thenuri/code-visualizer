@@ -1921,6 +1921,7 @@ export class CodeCityVisualizer {
 
     // Store method data
     floorGroup.userData.node = methodNode;
+    floorGroup.userData.isFloorGroup = true;
 
     return floorGroup;
   }

@@ -222,7 +222,7 @@ export class Visualizer {
       for (const child of ast.children) {
         if (
           child &&
-          (child.type === "class" || child.type === "abstractClass") &&
+          (child.type === "class" || child.type === "abstractClass" || child.type === "interface") &&
           child.name === className
         ) {
           return child;
@@ -254,26 +254,33 @@ export class Visualizer {
       )
         continue;
 
-      const parentClass = findClass(classNode.inherits[0]);
-      if (!parentClass) continue;
+      for (const parentName of classNode.inherits) {
+        const parentClass = findClass(parentName);
+        if (!parentClass) continue;
 
-      for (const method of classNode.children) {
-        if (!method || method.type !== "method") continue;
+        for (const method of classNode.children) {
+          if (!method || method.type !== "method") continue;
+          if (method.overrides) continue; // already resolved at parse time
 
-        const hasOverride =
-          method.modifiers && method.modifiers.includes("override");
-        if (!hasOverride) continue;
+          const hasOverride =
+            method.modifiers && method.modifiers.includes("override");
 
-        const parentMethod = findMethod(parentClass, method.name);
-        if (parentMethod) {
-          const isVirtualOrAbstract =
-            (parentMethod.modifiers &&
-              (parentMethod.modifiers.includes("virtual") ||
-                parentMethod.modifiers.includes("abstract"))) ||
-            parentMethod.isVirtual ||
-            parentMethod.isAbstract;
+          const parentMethod = findMethod(parentClass, method.name);
+          if (!parentMethod) continue;
 
-          if (isVirtualOrAbstract) {
+          if (hasOverride) {
+            // C#: require parent to be virtual or abstract
+            const isVirtualOrAbstract =
+              (parentMethod.modifiers &&
+                (parentMethod.modifiers.includes("virtual") ||
+                  parentMethod.modifiers.includes("abstract"))) ||
+              parentMethod.isVirtual ||
+              parentMethod.isAbstract;
+            if (isVirtualOrAbstract) {
+              method.overrides = parentMethod.name;
+            }
+          } else if (parentMethod.isAbstract || parentMethod.isVirtual) {
+            // Python / PHP: parent method is abstract or virtual — this is an override
             method.overrides = parentMethod.name;
           }
         }

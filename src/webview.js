@@ -381,6 +381,39 @@ function getLesson(node, indicatorType) {
   return key?EDU[key]:null;
 }
 
+function findClassNode(name) {
+  for (const m of clickMeshes) {
+    const n = m.userData?.node;
+    if (n && (n.type==="class"||n.type==="abstractClass"||n.type==="interface") && n.name===name) return n;
+  }
+  return null;
+}
+
+function buildInheritedMethodsHTML(parentNode, childNode) {
+  if (!parentNode) return "";
+  const parentMethods = (parentNode.children||[]).filter(c=>c.type==="method"||c.type==="function"||c.type==="constructor");
+  if (!parentMethods.length) return "";
+  const childOverrides = new Set((childNode?.children||[]).filter(c=>c.overrides||(c.modifiers||[]).includes("override")).map(c=>c.name));
+  const rows = parentMethods.map(m=>{
+    const isOverridden = childOverrides.has(m.name);
+    const icon = methodIcon(m);
+    const accessIcon = m.access==="private"?"🔒":m.access==="protected"?"🛡":"🌐";
+    const status = isOverridden
+      ? `<span style="color:#00e5c8;font-size:11px">↑ overridden by ${childNode?.name||"child"}</span>`
+      : `<span style="color:#6b7280;font-size:11px">✓ inherited</span>`;
+    return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #1e293b">
+      <span style="font-size:13px">${icon}</span>
+      <span style="flex:1;color:#e2e8f0;font-size:13px">${m.name}</span>
+      <span style="font-size:11px">${accessIcon}</span>
+      ${status}
+    </div>`;
+  }).join("");
+  const label = childNode
+    ? `What <b>${childNode.name}</b> gets from <b>${parentNode.name}</b>`
+    : `Methods from <b>${parentNode.name}</b>`;
+  return `<div class="edu-section"><div class="edu-label">📋 Inherited methods — ${label}</div><div class="edu-body" style="padding:0">${rows}</div></div>`;
+}
+
 function getLineLessonHTML(lineType, source, target) {
   const L={
     inheritance:{icon:"🔗",color:"#00ff00",label:"Inheritance",
@@ -401,13 +434,17 @@ function getLineLessonHTML(lineType, source, target) {
       analogy:`A speak() method in Animal prints "...". Dog overrides it to print "Woof!". Cat overrides it to print "Meow!". You can call speak() on any Animal and get the right sound — without knowing which animal it is. That is polymorphism.`},
   };
   const l=L[lineType]; if(!l) return null;
+  const inheritedSection = lineType==="inheritance"
+    ? buildInheritedMethodsHTML(findClassNode(target), findClassNode(source))
+    : "";
   return `<div class="edu-header" style="border-color:${l.color}44;background:${l.color}11">
     <span class="edu-icon">${l.icon}</span>
     <div><div class="edu-concept" style="color:${l.color}">${l.label}</div>
     <div class="edu-name">${source} ➜ ${target}</div></div></div>
     <div class="edu-section"><div class="edu-label">📖 What is it?</div><div class="edu-body">${l.what}</div></div>
     <div class="edu-section"><div class="edu-label">🏙 In this city</div><div class="edu-body">${l.city}</div></div>
-    <div class="edu-section"><div class="edu-label">💡 Analogy</div><div class="edu-body">${l.analogy}</div></div>`;
+    <div class="edu-section"><div class="edu-label">💡 Analogy</div><div class="edu-body">${l.analogy}</div></div>
+    ${inheritedSection}`;
 }
 
 function buildEduHTML(node, ownerName, indicatorType) {
@@ -466,7 +503,9 @@ function buildSpecificExplanation(node, ownerName, indicatorType, lesson) {
     thisElement = `<b>${name}</b> is a class${inClass} that defines a reusable blueprint. It has <b>${mc} method${mc!==1?"s":""}</b> (what it can do) and <b>${pc} propert${pc!==1?"ies":"y"}</b> (what it stores).`;
     if (inherits.length) {
       thisElement += ` It extends <b>${inherits.join(", ")}</b>, which means it inherits all of that class's behaviour and can add its own.`;
-      whySection = `<div class="edu-section"><div class="edu-label">🔗 Why it inherits</div><div class="edu-body"><b>${name}</b> is a more specialised version of <b>${inherits[0]}</b>. Any code that can use a <b>${inherits[0]}</b> can also use a <b>${name}</b> — this is the Liskov Substitution Principle in action.</div></div>`;
+      const parentNode = findClassNode(inherits[0]);
+      const inheritedHTML = buildInheritedMethodsHTML(parentNode, node);
+      whySection = `<div class="edu-section"><div class="edu-label">🔗 Why it inherits</div><div class="edu-body"><b>${name}</b> is a more specialised version of <b>${inherits[0]}</b>. Any code that can use a <b>${inherits[0]}</b> can also use a <b>${name}</b> — this is the Liskov Substitution Principle in action.</div></div>${inheritedHTML}`;
     }
     if (impls.length) {
       thisElement += ` It implements <b>${impls.join(", ")}</b>, committing to provide all the methods those interfaces require.`;
@@ -757,7 +796,8 @@ const FILTERS = {
   classes:{label:"Classes",icon:"🏛",active:true}, abstractClass:{label:"Abstract",icon:"🔷",active:true},
   interfaces:{label:"Interfaces",icon:"📋",active:true}, methods:{label:"Methods",icon:"⚙",active:true},
   inheritance:{label:"Inheritance",icon:"🔗",active:true}, composition:{label:"Composition",icon:"◆",active:true},
-  instantiation:{label:"Instantiation",icon:"✦",active:true}, highComplexity:{label:"High Cx",icon:"🔥",active:false},
+  instantiation:{label:"Instantiation",icon:"✦",active:true}, polymorphism:{label:"Polymorphism",icon:"🔀",active:true},
+  highComplexity:{label:"High Cx",icon:"🔥",active:false},
 };
 function buildFilterPanel() {
   filterPanel.innerHTML=`<div class="fp-title">Filter OOP Concepts</div><div class="fp-grid">
@@ -774,10 +814,11 @@ function applyFilters() {
     if (!obj.userData) return;
     const ud=obj.userData; let vis=true;
     if (ud.isBuilding&&ud.node){const t=ud.node.type;if(t==="abstractClass"&&!FILTERS.abstractClass.active)vis=false;else if(t==="interface"&&!FILTERS.interfaces.active)vis=false;else if(t==="class"&&!FILTERS.classes.active)vis=false;}
-    if (ud.isMainFloorMesh&&ud.node&&!FILTERS.methods.active) vis=false;
-    if (ud.compositionLine&&!FILTERS.composition.active) vis=false;
-    if (ud.instantiationLine&&!FILTERS.instantiation.active) vis=false;
-    if (ud.inheritanceLine&&!FILTERS.inheritance.active) vis=false;
+    if (ud.isFloorGroup&&!FILTERS.methods.active) vis=false;
+    if ((ud.compositionModule||ud.compositionAnnex||ud.compositionWalkway)&&!FILTERS.composition.active) vis=false;
+    if ((ud.instantiationChimney||ud.instantiationPuff)&&!FILTERS.instantiation.active) vis=false;
+    if ((ud.inheritancePlinth||ud.inheritanceRidge||ud.inheritanceFamilyStripe||ud.inheritanceFamilyRoof)&&!FILTERS.inheritance.active) vis=false;
+    if ((ud.inheritanceMethodMarker||ud.indicatorType==='override'||ud.indicatorType==='polymorphism-virtual'||ud.indicatorType==='polymorphism-abstract')&&!FILTERS.polymorphism.active) vis=false;
     if (obj.visible!==vis) obj.visible=vis;
   });
 }
