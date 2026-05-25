@@ -27460,6 +27460,17 @@
     if (indicatorType) {
       const lesson2 = getLesson(node, indicatorType);
       const iname = node.name || "?";
+      if (indicatorType === "inheritance-stripe" || indicatorType === "inheritance-roof") {
+        const familyRoot = extra == null ? void 0 : extra.familyRoot;
+        const familyLine = familyRoot ? `<div class="tt-owner">🔗 Inheritance family: <b style="color:#a78bfa">${familyRoot}</b></div>` : `<div class="tt-owner">🔗 Inheritance family: <b style="color:#a78bfa">unknown</b></div>`;
+        const memberLine = familyRoot && iname !== familyRoot ? `<div class="tt-owner">↳ <b>${iname}</b> extends from <b>${familyRoot}</b></div>` : `<div class="tt-owner">↳ <b>${iname}</b> is the root of this family</div>`;
+        return `
+        ${indicatorStrip(indicatorType, lesson2, extra)}
+        <div class="tt-header">🏛 <b>${iname}</b></div>
+        ${familyLine}
+        ${memberLine}
+        <div class="tt-hint">Click for full lesson · Ctrl+Click to open file</div>`.trim();
+      }
       return `
       ${indicatorStrip(indicatorType, lesson2, extra)}
       <div class="tt-header">⚙ <b>${iname}</b></div>
