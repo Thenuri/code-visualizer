@@ -118,6 +118,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#1a1e2e;
 .legend-items.hidden{display:none}
 .legend-row{display:flex;align-items:center;gap:5px;font-size:9px;color:#64748b;line-height:1.3;padding:1px 0}
 .legend-swatch{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+.legend-sym{width:14px;text-align:center;font-size:11px;flex-shrink:0;line-height:1}
 .legend-section{font-size:7.5px;font-weight:800;text-transform:uppercase;
   letter-spacing:.07em;color:#374151;padding:4px 0 1px;margin-top:1px;
   border-top:1px solid rgba(255,255,255,.05);flex-shrink:0}

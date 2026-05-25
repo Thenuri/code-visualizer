@@ -868,7 +868,25 @@ function buildLegend() {
       <div class="legend-row"><span class="legend-swatch" style="background:#1a6fbf"></span> Side annex = Composition (has-a)</div>
       <div class="legend-row"><span class="legend-swatch" style="background:#ff4400;border-radius:50%"></span> Chimney = Instantiation (new X())</div>
 
-      <div class="legend-section">⑦ HOW TO USE</div>
+      <div class="legend-section">⑦ PANEL &amp; TOOLTIP SYMBOLS</div>
+      <div class="legend-row"><span class="legend-sym">🏛</span> Class</div>
+      <div class="legend-row"><span class="legend-sym">🔷</span> Abstract Class</div>
+      <div class="legend-row"><span class="legend-sym">📋</span> Interface</div>
+      <div class="legend-row"><span class="legend-sym">⚙</span> Method / Function</div>
+      <div class="legend-row"><span class="legend-sym">🔧</span> Constructor</div>
+      <div class="legend-row"><span class="legend-sym">◇</span> Abstract Method (no body)</div>
+      <div class="legend-row"><span class="legend-sym">◈</span> Virtual Method (can be overridden)</div>
+      <div class="legend-row"><span class="legend-sym">🔀</span> Override / Polymorphism</div>
+      <div class="legend-row"><span class="legend-sym">⊞</span> Static Member</div>
+      <div class="legend-row"><span class="legend-sym">🌐</span> Public Access</div>
+      <div class="legend-row"><span class="legend-sym">🛡</span> Protected Access</div>
+      <div class="legend-row"><span class="legend-sym">🔒</span> Private Access</div>
+      <div class="legend-row"><span class="legend-sym">◆</span> Composition (has-a)</div>
+      <div class="legend-row"><span class="legend-sym">🔗</span> Inheritance Link</div>
+      <div class="legend-row"><span class="legend-sym">✦</span> Instantiation (new object)</div>
+      <div class="legend-row"><span class="legend-sym">🔥</span> High Complexity</div>
+
+      <div class="legend-section">⑧ HOW TO USE</div>
       <div class="legend-row">Hover any shape → tooltip explains it</div>
       <div class="legend-row">Click → full OOP lesson</div>
       <div class="legend-row">Double-click building → enter it</div>
